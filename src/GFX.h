@@ -7,6 +7,16 @@ class GFX{
         GFX(VGA_esp32& vga);
         ~GFX();
 
+        inline uint16_t getColor(uint8_t r, uint8_t g, uint8_t b){
+            if (_vga._scr.bpp == _16BIT) {
+                return ((r >> 3) << 11) |
+                    ((g >> 2) << 5 ) |
+                    ( b >> 3);
+            } else {
+                return (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6);
+            }
+        }
+
         // ---- 8 bit (RGB332) ----
         inline uint8_t RGB8(uint8_t r, uint8_t g, uint8_t b) { return ((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6); }
         inline uint8_t R8(uint8_t c) { return (c >> 5) & 0x07; }

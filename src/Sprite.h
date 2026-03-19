@@ -20,6 +20,7 @@ class Sprite{
         Sprite(VGA_esp32 &vga);
         ~Sprite();
 
+        uint8_t MaxImg() { return _images; };
         int Width(uint8_t num = 0)  { return ((!_created || num >= _images) ? 0 : _img[num].width); }
         int Height(uint8_t num = 0) { return ((!_created || num >= _images) ? 0 : _img[num].height); }
         int CX(uint8_t num = 0)     { return ((!_created || num >= _images) ? 0 : _img[num].cx); }
@@ -33,8 +34,7 @@ class Sprite{
             return (!_created || !_buf || num >= _images) ? nullptr : (uint16_t*)(_buf + _img[num].offset);
         }
 
-        uint8_t Images() { return _images; };
-
+        bool createImages(int xx, int yy, uint8_t num);
         bool loadImages(const uint8_t* data);
         void putImage(int x, int y, uint8_t num = 0);
         void putSprite(int x, int y, uint16_t maskColor, uint8_t num = 0);

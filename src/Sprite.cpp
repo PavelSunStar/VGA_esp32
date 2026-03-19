@@ -22,6 +22,54 @@ void Sprite::resetParam(uint8_t num){
     _img = new Image[_images];
 }
 
+bool Sprite::setBufferAddr() {
+    if (!_buf || !_img || _images == 0) {
+        Serial.println("setBufferAddr: invalid sprite buffer");
+        return false;
+    }
+
+    if (_line8) {
+        delete[] _line8;
+        _line8 = nullptr;
+    }
+
+    if (_line16) {
+        delete[] _line16;
+        _line16 = nullptr;
+    }
+
+    int totalLines = 0;
+    for (int i = 0; i < _images; i++) totalLines += _img[i].height;
+
+    int line = 0;
+    if (_bpp == _16BIT){
+        uint16_t* base = (uint16_t*)_buf;
+        _line16 = new uint16_t*[totalLines];
+
+        for (int i = 0; i < _images; i++){
+            Image &im = _img[i];
+            for (int y = 0; y < im.height; y++){
+                _line16[line++] = base;
+                base += im.width;
+            }
+        }
+    } else {
+        uint8_t* base = _buf;
+        _line8 = new uint8_t*[totalLines];
+
+        for (int i = 0; i < _images; i++){
+            Image &im = _img[i];
+            for (int y = 0; y < im.height; y++){
+                _line8[line++] = base;
+                base += im.width;
+            }
+        }
+    }
+
+    return true;
+}
+
+/*
 bool Sprite::setBufferAddr(){
     if (!_buf) {
         Serial.println("initBuffer: invalid screen buffer");
@@ -71,92 +119,61 @@ bool Sprite::setBufferAddr(){
 
     return true;
 }
+*/
 
 bool Sprite::loadImages(const uint8_t* data){
     if (!data) return false;
 
-    uint8_t bpp = *data++;
-    if (bpp != _8BIT && bpp != _16BIT) return false;
-    _bpp = _vga._scr.bpp; 
+    uint8_t imgBPP = *data++;
+    if (imgBPP != _8BIT && imgBPP != _16BIT) return false;
     resetParam(*data++);
 
     data += _images << 2;
     const uint8_t* ptr = data;    
-    Serial.printf("bit: %d, img: %d\n", bpp, _images);
 
     int fullSize = 0;
     uint32_t offsetLine = 0;
-    _shift = (_bpp == _16BIT ? 1 : 0); 
-    uint8_t shift = (bpp == _16BIT ? 1 : 0);   
-    for (int i = 0; i < _images; i++) {
-        _img[i].width      = (*data++) | (*data++ << 8);
-        _img[i].height     = (*data++) | (*data++ << 8);
-        Serial.printf("w: %d, h: %d\n", _img[i].width, _img[i].height);
+    _bpp = _vga._scr.bpp; 
+    _shift = (_bpp == _16BIT ? 1 : 0);
+    int imgShift = (imgBPP == 16 ? 1 : 0); 
 
-        _img[i].maxX         = _img[i].width - 1;
-        _img[i].maxY         = _img[i].height - 1;
-        _img[i].cx         = _img[i].width >> 1;
-        _img[i].cy         = _img[i].height >> 1;
-        _img[i].lineSize   = _img[i].width << _shift;
-        _img[i].size       = _img[i].width * _img[i].height;
-        _img[i].fullSize   = _img[i].lineSize * _img[i].height;
-        _img[i].offset     = fullSize;
-        _img[i].offsetLine = offsetLine;
+    for (int i = 0; i < _images; i++){
+        _img[i].width       = (*data++) | (*data++ << 8);
+        _img[i].height      = (*data++) | (*data++ << 8);
+        _img[i].maxX        = _img[i].width - 1;
+        _img[i].maxY        = _img[i].height - 1;
+        _img[i].cx          = _img[i].width >> 1;
+        _img[i].cy          = _img[i].height >> 1;
+        _img[i].lineSize    = _img[i].width << _shift;
+        _img[i].size        = _img[i].width * _img[i].height;
+        _img[i].fullSize    = _img[i].lineSize * _img[i].height;
+        _img[i].offset      = fullSize;
+        _img[i].offsetLine  = offsetLine;
 
         // viewport
         _img[i].x1 = 0; _img[i].x2 = _img[i].maxX; 
         _img[i].y1 = 0; _img[i].y2 = _img[i].maxY;
 
-        data += (_img[i].width << shift) * _img[i].height;
-        offsetLine += _img[i].height;
-        fullSize += _img[i].fullSize;
+        offsetLine  += _img[i].height;
+        fullSize    += _img[i].fullSize;
+        data        += (_img[i].width << imgShift) * _img[i].height;
     }
-    
-    if (!_vga.allocateMemory(_buf, fullSize, false)) return false;
+
+    if (!_vga.allocateMemory(_buf, fullSize, false)) return false;  // DMA = false;
     if (!setBufferAddr()) return false;
-
-    uint32_t index = 0;
-    uint32_t addr = 0;
-    for (int i = 0; i < _images; i++){
-        for (int y = 0; y < _img[i].height; y++){
-            if (_bpp == _16BIT){
-                _line16[index++] = (uint16_t*)(_buf + addr);
-            } else {
-                _line8[index++] = _buf + addr;
-            }
-
-            addr += _img[i].lineSize;
-        }
-    }
 
     for (int i = 0; i < _images; i++){
         ptr += 4;
+        int size = _img[i].size;
 
-        if (_bpp == bpp){
-            memcpy(_buf + _img[i].offset, ptr, _img[i].fullSize);
+        if (imgBPP == _bpp){
+            memcpy(_buf + _img[i].offset, ptr, _img[i].fullSize);   // Convert not needed
             ptr += _img[i].fullSize; 
-        } else if ((bpp == _16BIT) && (_bpp == _8BIT)){
-            const uint16_t* sour = (uint16_t*)ptr;
-            uint8_t* dest = _buf + _img[i].offset;
-            int size = _img[i].size;
+        } else if (imgBPP == 8 && _bpp == 16){                      // Convert 8 -> 16
+            uint16_t* dest = (uint16_t*)(_buf + _img[i].offset);
 
             while (size-- > 0){
-                uint16_t col16 = *sour++;
-                uint8_t r3 = (col16 >> 13) & 0x07;
-                uint8_t g3 = (col16 >> 8)  & 0x07;
-                uint8_t b2 = (col16 >> 3)  & 0x03;
-                
-                *dest++ = (r3 << 5) | (g3 << 2) | b2;
-            }
-
-            ptr += _img[i].size << 1;
-        } else if ((bpp == _8BIT) && (_bpp == _16BIT)){
-            const uint8_t* sour = ptr;
-            uint16_t* dest = (uint16_t*)(_buf + _img[i].offset);                       
-            int size = _img[i].size;
-
-            while (size-- > 0){
-                uint8_t col8 = *sour++;
+                uint8_t col8 = *ptr++;
 
                 uint8_t r3 = (col8 >> 5) & 0x07;
                 uint8_t g3 = (col8 >> 2) & 0x07;
@@ -168,9 +185,22 @@ bool Sprite::loadImages(const uint8_t* data){
 
                 *dest++ = (r5 << 11) | (g6 << 5) | b5;
             }
+        } else if (imgBPP == 16 && _bpp == 8){
+            uint16_t* sour = (uint16_t*)ptr;
+            uint8_t* dest = _buf + _img[i].offset;
 
-            ptr += _img[i].size;
-        }               
+            while (size-- > 0){
+                uint16_t col16 = *sour++;
+
+                uint8_t r3 = (col16 >> 13) & 0x07;
+                uint8_t g3 = (col16 >> 8)  & 0x07;
+                uint8_t b2 = (col16 >> 3)  & 0x03;
+                
+                *dest++ = (r3 << 5) | (g3 << 2) | b2;
+            }
+            
+            ptr += _img[i].fullSize;
+        }
     }
 
     return (_created = true);
@@ -191,7 +221,7 @@ void Sprite::putImage(int x, int y, uint8_t num){
 
     if (x >= s.x1 && y >= s.y1 && xx <= s.x2 && yy <= s.y2){
         uint8_t* img = _buf + im.offset;
-        uint8_t* scr = (_bpp == _16BIT) ? (uint8_t*)&s.line16[_vga. _backBufLine + y][x] : (uint8_t*)&s.line8[_vga. _backBufLine + y][x];     
+        uint8_t* scr = (_bpp == _16BIT) ? (uint8_t*)&s.line16[_vga._backBufLine + y][x] : (uint8_t*)&s.line8[_vga._backBufLine + y][x];     
 
         int lines = im.height;  
         while (lines-- > 0){
@@ -213,8 +243,8 @@ void Sprite::putImage(int x, int y, uint8_t num){
             ? (uint8_t*)&_line16[im.offsetLine + syu][sxl]
             : (uint8_t*)&_line8[im.offsetLine + syu][sxl];
         uint8_t* scr = (_bpp == _16BIT)
-            ? (uint8_t*)&s.line16[_vga. _backBufLine + y + syu][x + sxl]
-            : (uint8_t*)&s.line8 [_vga. _backBufLine + y + syu][x + sxl];  
+            ? (uint8_t*)&s.line16[_vga._backBufLine + y + syu][x + sxl]
+            : (uint8_t*)&s.line8 [_vga._backBufLine + y + syu][x + sxl];  
             
         while (copyY-- > 0){
             memcpy(scr, img, copyX);
@@ -235,8 +265,8 @@ void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
     if (xx < s.x1 || yy < s.y1) return;
 
     if (x >= s.x1 && y >= s.y1 && xx <= s.x2 && yy <= s.y2){
-        int lines = im.height;    
-        int scrLineSize = s.lineSize - im.lineSize;
+        int lines = im.height;  
+        int skip = s.width - im.width;  
 
         if (_bpp == _16BIT){
             uint16_t* img = &_line16[im.offsetLine][0];
@@ -248,7 +278,7 @@ void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
                     img++;
                     scr++;
                 }
-                scr += scrLineSize;
+                scr += skip;
             }            
         } else {
             uint8_t* img = &_line8[im.offsetLine][0];
@@ -260,7 +290,7 @@ void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
                     img++;
                     scr++;
                 }
-                scr += scrLineSize;
+                scr += skip;
             }  
         }
     } else { 

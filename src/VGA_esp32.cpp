@@ -140,6 +140,7 @@ bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff){
     if (!initPanel()) return false;
 
     Serial.println("VGA init...done\n");
+
     return (_inited = true);
 }
 
@@ -310,7 +311,7 @@ uint16_t VGA_esp32::optimal_bounce_buffer_px(){
     int res = 0;
     _shift = (_scr.bpp == 16 ? 1 : 0);
     if (_m.hRes == 640 && _m.vRes == 480) res = 30720 >> _shift;    
-    _lastPos     = (_m.hRes * (_m.vRes << _shift)) - res;
+    _lastPos     = (_m.hRes * _m.vRes) - res;
 
 
     _lines = (res / _m.hRes) >> _scale;
