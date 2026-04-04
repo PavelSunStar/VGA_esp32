@@ -30,16 +30,34 @@ class GFX{
         inline uint16_t B16(uint16_t c) { return  c        & 0x1F; }
 
         void cls(uint16_t col = 0);
+        uint16_t getPixel(int x, int y);
         void putPixel(int x, int y, uint16_t col);
         void putPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b);
-        void putPixel(int x, int y, uint16_t col, Screen &scr);
-        void putPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b, Screen &scr);
-        void hLine(int x1, int y, int x2, uint16_t col);
-        void vLine(int x, int y1, int y2, uint16_t col);
+        void hLine(int x0, int y, int x1, uint16_t col);
+        void hLineOr(int x0, int y, int x1, uint16_t col);
+        void hLineLength(int x, int y, int w, uint16_t col);
+        void vLine(int x, int y0, int y1, uint16_t col);
+        void vLineOr(int x, int y0, int y1, uint16_t col);
+        void vLineLength(int x, int y, int h, uint16_t col);
+        void line(int x0, int y0, int x1, int y1, uint16_t col);
+        void rect(int x0, int y0, int x1, int y1, uint16_t col);
+        void fillRect(int x0, int y0, int x1, int y1, uint16_t col);
+        void triangle(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t col);
+        void circle(int xc, int yc, int r, uint16_t col);
+        void fillCircle(int xc, int yc, int r, uint16_t col);
+
+        void hBandOr(int y, int x0, int x1, uint16_t step);
+        void vBandOr(int x, int y0, int y1, uint16_t step);     
+        void hBandFill(int y, int x0, int x1, uint16_t step);
+        void vBandFill(int x, int y0, int y1, uint16_t step);           
         void testRGBPanel();
 
     private:
         Screen _img;
 
-        VGA_esp32 &_vga; 
+        VGA_esp32 &_vga;
+        
+    protected:
+        void hLineFast(int x, int y, int len, uint16_t col);
+        void vLineFast(int x, int y, int len, uint16_t col);
 };

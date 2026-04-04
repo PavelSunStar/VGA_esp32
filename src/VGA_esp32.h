@@ -12,6 +12,7 @@ struct Screen{
     uint8_t*    buf = nullptr;
     uint8_t**   line8 = nullptr;
     uint16_t**  line16 = nullptr;
+    uint8_t*    bg = nullptr;
 
     // Screen config
     uint8_t     bpp;
@@ -22,13 +23,24 @@ struct Screen{
     int         size, fullSize;
     
     // viewport
-    int         x1, x2;
-    int         y1, y2;
+    int         x0, x1;
+    int         y0, y1;
+};
+
+struct virtualImage{
+    uint8_t*    buf;
+    int         width, height;
+    uint8_t     bpp;
+
+    // viewport
+    int         x0, x1;
+    int         y0, y1;
 };
 
 class VGA_esp32{
     friend class GFX;
     friend class Sprite;
+    friend class Tiles;
 
     public:
         VGA_esp32();
@@ -61,17 +73,20 @@ class VGA_esp32{
         int CY()        { return _scr.cy; }
 
         //Screen viewport
-        int vX1()       {return _scr.x1;};
-        int vY1()       {return _scr.y1;};
-        int vX2()       {return _scr.x2;};
-        int vY2()       {return _scr.y2;};
+        int vX1()       {return _scr.x0;};
+        int vY1()       {return _scr.y0;};
+        int vX2()       {return _scr.x1;};
+        int vY2()       {return _scr.y1;};
 
         bool allocateMemory(uint8_t* &buffer, size_t size, bool dma = false);
         bool init(Mode &m = MODE640x480_60Hz, int bpp = 8, int scale = 0, int dBuff = false);
+        bool initBG();
+        void scrToBg();
+        void bgToScr();        
         void swap();
         void updateFPS();
 
-        void setViewport(int x1, int y1, int x2, int y2);
+        void setViewport(int x0, int y0, int x1, int y1);
         void memoryInfo();
 
         void setPins(Pins p);    
@@ -89,6 +104,7 @@ class VGA_esp32{
         bool    _psram_ok   = false;
         bool    _inited     = false;
         bool    _dBuff      = false;
+        bool    _bg         = false;
 
         Mode        _m = {};
         Screen      _scr = {};

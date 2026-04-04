@@ -69,58 +69,6 @@ bool Sprite::setBufferAddr() {
     return true;
 }
 
-/*
-bool Sprite::setBufferAddr(){
-    if (!_buf) {
-        Serial.println("initBuffer: invalid screen buffer");
-        return false;
-    }
-
-    if (_line8) {
-        delete[] _line8;
-        _line8 = nullptr;
-    }
-
-    if (_line16) {
-        delete[] _line16;
-        _line16 = nullptr;
-    } 
-
-    int lines = 0;
-    for (int i = 0; i < _images; i++) lines += _img[i].height;
-
-    if (_bpp == _16BIT) {
-        uint16_t* p = (uint16_t*)_buf;
-        _line16 = new uint16_t*[lines]();
-
-        if (!_line16) {
-            Serial.println("initBuffer: failed to alloc line16 table");
-            return false;
-        }
-
-        for (int i = 0; i < lines; i++) {
-            _line16[i] = p;
-            p += _img[i].width;
-        }
-    } else {
-        uint8_t* p = _buf;
-        _line8 = new uint8_t*[lines]();
-
-        if (!_line8) {
-            Serial.println("initBuffer: failed to alloc line8 table");
-            return false;
-        }
-
-        for (int i = 0; i < lines; i++) {
-            _line8[i] = p;
-            p += _img[i].width;
-        }
-    }
-
-    return true;
-}
-*/
-
 bool Sprite::loadImages(const uint8_t* data){
     if (!data) return false;
 
@@ -151,8 +99,8 @@ bool Sprite::loadImages(const uint8_t* data){
         _img[i].offsetLine  = offsetLine;
 
         // viewport
-        _img[i].x1 = 0; _img[i].x2 = _img[i].maxX; 
-        _img[i].y1 = 0; _img[i].y2 = _img[i].maxY;
+        _img[i].x0 = 0; _img[i].x1 = _img[i].maxX; 
+        _img[i].y0 = 0; _img[i].y1 = _img[i].maxY;
 
         offsetLine  += _img[i].height;
         fullSize    += _img[i].fullSize;
@@ -211,15 +159,15 @@ void Sprite::putImage(int x, int y, uint8_t num){
     
     auto& s = _vga._scr;
     Image &im = _img[num];
-    if (x > s.x2 || y > s.y2) return;    
+    if (x > s.x1 || y > s.y1) return;    
     int xx = x + im.maxX;
     int yy = y + im.maxY;
-    if (xx < s.x1 || yy < s.y1) return;
+    if (xx < s.x0 || yy < s.y0) return;
 
     int imageLineSize   = im.lineSize; 
     int scrLineSize     = s.lineSize;
 
-    if (x >= s.x1 && y >= s.y1 && xx <= s.x2 && yy <= s.y2){
+    if (x >= s.x0 && y >= s.y0 && xx <= s.x1 && yy <= s.y1){
         uint8_t* img = _buf + im.offset;
         uint8_t* scr = (_bpp == _16BIT) ? (uint8_t*)&s.line16[_vga._backBufLine + y][x] : (uint8_t*)&s.line8[_vga._backBufLine + y][x];     
 
@@ -230,10 +178,10 @@ void Sprite::putImage(int x, int y, uint8_t num){
             img += imageLineSize;
         }        
     } else {
-        int sxl = (x  < s.x1 ? (s.x1 - x)  : 0);
-        int sxr = (xx > s.x2 ? (xx - s.x2) : 0);
-        int syu = (y  < s.y1 ? (s.y1 - y)  : 0);
-        int syd = (yy > s.y2 ? (yy - s.y2) : 0);
+        int sxl = (x  < s.x0 ? (s.x0 - x)  : 0);
+        int sxr = (xx > s.x1 ? (xx - s.x1) : 0);
+        int syu = (y  < s.y0 ? (s.y0 - y)  : 0);
+        int syd = (yy > s.y1 ? (yy - s.y1) : 0);
 
         int copyX = (im.width  - sxl - sxr) << _shift;
         int copyY =  im.height - syu - syd; 
@@ -259,12 +207,12 @@ void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
     
     auto& s = _vga._scr;
     Image &im = _img[num];
-    if (x > s.x2 || y > s.y2) return;    
+    if (x > s.x1 || y > s.y1) return;    
     int xx = x + im.maxX;
     int yy = y + im.maxY;
-    if (xx < s.x1 || yy < s.y1) return;
+    if (xx < s.x0 || yy < s.y0) return;
 
-    if (x >= s.x1 && y >= s.y1 && xx <= s.x2 && yy <= s.y2){
+    if (x >= s.x0 && y >= s.y0 && xx <= s.x1 && yy <= s.y1){
         int lines = im.height;  
         int skip = s.width - im.width;  
 
@@ -294,10 +242,10 @@ void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
             }  
         }
     } else { 
-        int sxl = (x  < s.x1 ? (s.x1 - x)  : 0);
-        int sxr = (xx > s.x2 ? (xx - s.x2) : 0);
-        int syu = (y  < s.y1 ? (s.y1 - y)  : 0);
-        int syd = (yy > s.y2 ? (yy - s.y2) : 0);
+        int sxl = (x  < s.x0 ? (s.x0 - x)  : 0);
+        int sxr = (xx > s.x1 ? (xx - s.x1) : 0);
+        int syu = (y  < s.y0 ? (s.y0 - y)  : 0);
+        int syd = (yy > s.y1 ? (yy - s.y1) : 0);
 
         int copyX = im.width  - sxl - sxr;
         int copyY =  im.height - syu - syd; 
@@ -352,35 +300,35 @@ void Sprite::putAffineSprite(int dstX, int dstY, float ang, uint16_t zoomX, uint
     );
 
     RectBounds rb = Matrix::bounds(m, (float)srcW, (float)srcH);
-    int x1 = (int)floorf(rb.sx); // округляет число вниз до ближайшего целого
-    int y1 = (int)floorf(rb.sy);
-    int x2 = (int)ceilf(rb.ex);  // округляет число вверх до ближайшего целого.
-    int y2 = (int)ceilf(rb.ey);
+    int x0 = (int)floorf(rb.sx); // округляет число вниз до ближайшего целого
+    int y0 = (int)floorf(rb.sy);
+    int x1 = (int)ceilf(rb.ex);  // округляет число вверх до ближайшего целого.
+    int y1 = (int)ceilf(rb.ey);
 
-    x1 = std::max(x1, s.x1);
-    y1 = std::max(y1, s.y1);
-    x2 = std::min(x2, s.x2 + 1);
-    y2 = std::min(y2, s.y2 + 1);
-    if (x1 >= x2 || y1 >= y2) return;
+    x0 = std::max(x0, s.x0);
+    y0 = std::max(y0, s.y0);
+    x1 = std::min(x1, s.x1 + 1);
+    y1 = std::min(y1, s.y1 + 1);
+    if (x0 >= x1 || y0 >= y1) return;
 
     Affine2DInv inv;
     if (!Matrix::invert(inv, m)) return;
 
-    // стартовые координаты для первой точки (x1, y1)
-    int32_t row_u = inv.a * x1 + inv.b * y1 + inv.c + HALF;
-    int32_t row_v = inv.d * x1 + inv.e * y1 + inv.f + HALF;
+    // стартовые координаты для первой точки (x0, y0)
+    int32_t row_u = inv.a * x0 + inv.b * y0 + inv.c + HALF;
+    int32_t row_v = inv.d * x0 + inv.e * y0 + inv.f + HALF;
       
     uint8_t** srcLines = _line8 + im.offsetLine;
-    uint8_t* dstBase   = &s.line8[_vga._backBufLine + y1][x1];
+    uint8_t* dstBase   = &s.line8[_vga._backBufLine + y0][x0];
     const uint8_t mask = (uint8_t)(maskColor & 0xFF);
-    //const int dstSkip  = s.width - x2 + x1;
+    //const int dstSkip  = s.width - x1 + x0;
 
-    for (int y = y1; y < y2; y++){
+    for (int y = y0; y < y1; y++){
         uint8_t* dst = dstBase;
         int32_t u = row_u;
         int32_t v = row_v;
 
-        for (int x = x1; x < x2; x++){
+        for (int x = x0; x < x1; x++){
             int sx = u >> FP_SHIFT;
             int sy = v >> FP_SHIFT;
 
@@ -426,16 +374,16 @@ void Sprite::putMatImage(int32_t dstX, int32_t dstY, float ang, uint8_t num){
 
     RectBounds rb = Matrix::bounds(m, (float)srcW, (float)srcH);
 
-    int x1 = (int)floorf(rb.sx);
-    int y1 = (int)floorf(rb.sy);
-    int x2 = (int)ceilf(rb.ex);
-    int y2 = (int)ceilf(rb.ey);
+    int x0 = (int)floorf(rb.sx);
+    int y0 = (int)floorf(rb.sy);
+    int x1 = (int)ceilf(rb.ex);
+    int y1 = (int)ceilf(rb.ey);
 
-    x1 = std::max(x1, s.x1);
-    y1 = std::max(y1, s.y1);
-    x2 = std::min(x2, s.x2 + 1);
-    y2 = std::min(y2, s.y2 + 1);
-    if (x1 >= x2 || y1 >= y2) return;
+    x0 = std::max(x0, s.x0);
+    y0 = std::max(y0, s.y0);
+    x1 = std::min(x1, s.x1 + 1);
+    y1 = std::min(y1, s.y1 + 1);
+    if (x0 >= x1 || y0 >= y1) return;
 
     Affine2DInv inv;
     if (!Matrix::invert(inv, m)) return;
@@ -447,15 +395,15 @@ void Sprite::putMatImage(int32_t dstX, int32_t dstY, float ang, uint8_t num){
     const int32_t E = inv.e;
     const int32_t F = inv.f;
 
-    const int32_t uu = A * x1 + C + HALF;
-    const int32_t vv = D * x1 + F + HALF;
+    const int32_t uu = A * x0 + C + HALF;
+    const int32_t vv = D * x0 + F + HALF;
 
-    for (int y = y1; y < y2; y++){
-        uint8_t* dst = &s.line8[y + _vga._backBufLine][x1];
+    for (int y = y0; y < y1; y++){
+        uint8_t* dst = &s.line8[y + _vga._backBufLine][x0];
         int32_t u = uu + B * y;
         int32_t v = vv + E * y;
 
-        for (int x = x1; x < x2; x++){
+        for (int x = x0; x < x1; x++){
             const int sx = u >> FP_SHIFT;
             const int sy = v >> FP_SHIFT;
 
@@ -495,39 +443,39 @@ void Sprite::putAffineSprite(int32_t dstX, int32_t dstY, float ang, uint16_t mas
 
     RectBounds rb = Matrix::bounds(m, (float)srcW, (float)srcH);
 
-    int x1 = (int)floorf(rb.sx);
-    int y1 = (int)floorf(rb.sy);
-    int x2 = (int)ceilf(rb.ex);
-    int y2 = (int)ceilf(rb.ey);
+    int x0 = (int)floorf(rb.sx);
+    int y0 = (int)floorf(rb.sy);
+    int x1 = (int)ceilf(rb.ex);
+    int y1 = (int)ceilf(rb.ey);
 
     // clip to screen
-    x1 = std::max(x1, s.x1);
-    y1 = std::max(y1, s.y1);
-    x2 = std::min(x2, s.x2 + 1);
-    y2 = std::min(y2, s.y2 + 1);
+    x0 = std::max(x0, s.x0);
+    y0 = std::max(y0, s.y0);
+    x1 = std::min(x1, s.x1 + 1);
+    y1 = std::min(y1, s.y1 + 1);
 
-    if (x1 >= x2 || y1 >= y2) return;
+    if (x0 >= x1 || y0 >= y1) return;
 
     Affine2DInv inv;
     if (!Matrix::invert(inv, m)) return;
 
-    // стартовые координаты для первой точки (x1, y1)
-    int32_t row_u = inv.a * x1 + inv.b * y1 + inv.c + HALF;
-    int32_t row_v = inv.d * x1 + inv.e * y1 + inv.f + HALF;
+    // стартовые координаты для первой точки (x0, y0)
+    int32_t row_u = inv.a * x0 + inv.b * y0 + inv.c + HALF;
+    int32_t row_v = inv.d * x0 + inv.e * y0 + inv.f + HALF;
 
     if (_bpp == _16BIT) {
         uint16_t** srcLines = _line16 + im.offsetLine;
-        uint16_t* dstBase   = &s.line16[_vga._backBufLine + y1][x1];
+        uint16_t* dstBase   = &s.line16[_vga._backBufLine + y0][x0];
         const uint16_t mask = maskColor;
-        const int dstSkip   = s.width - (x2 - x1);
+        const int dstSkip   = s.width - (x1 - x0);
 
-        for (int y = y1; y < y2; y++) {
+        for (int y = y0; y < y1; y++) {
             uint16_t* dst = dstBase;
 
             int32_t u = row_u;
             int32_t v = row_v;
 
-            for (int x = x1; x < x2; x++) {
+            for (int x = x0; x < x1; x++) {
                 int sx = u >> FP_SHIFT;
                 int sy = v >> FP_SHIFT;
 
@@ -550,17 +498,17 @@ void Sprite::putAffineSprite(int32_t dstX, int32_t dstY, float ang, uint16_t mas
         }
     } else {
         uint8_t** srcLines = _line8 + im.offsetLine;
-        uint8_t* dstBase   = &s.line8[_vga._backBufLine + y1][x1];
+        uint8_t* dstBase   = &s.line8[_vga._backBufLine + y0][x0];
         const uint8_t mask = (uint8_t)(maskColor & 0xFF);
-        const int dstSkip  = s.width - (x2 - x1);
+        const int dstSkip  = s.width - (x1 - x0);
 
-        for (int y = y1; y < y2; y++) {
+        for (int y = y0; y < y1; y++) {
             uint8_t* dst = dstBase;
 
             int32_t u = row_u;
             int32_t v = row_v;
 
-            for (int x = x1; x < x2; x++) {
+            for (int x = x0; x < x1; x++) {
                 int sx = u >> FP_SHIFT;
                 int sy = v >> FP_SHIFT;
 
@@ -589,7 +537,7 @@ uint16_t Sprite::getPixel(int x, int y, uint8_t num){
     if (!_created || num >= _images) return 0; 
     
     Image& im = _img[num];
-    if (x < im.x1 || y < im.y1 || x > im.x2 ||  y > im.y2) return 0;
+    if (x < im.x0 || y < im.y0 || x > im.x1 ||  y > im.y1) return 0;
 
     return ((_bpp == _16BIT) ? _line16[im.offsetLine + y][x] : (uint16_t)_line8[im.offsetLine + y][x]);
 }

@@ -11,8 +11,8 @@ struct Image{
     int offset, offsetLine;
 
     // viewport
-    int x1, x2;
-    int y1, y2;    
+    int x0, y0;
+    int x1, y1;    
 };
 
 class Sprite{
@@ -34,7 +34,7 @@ class Sprite{
             return (!_created || !_buf || num >= _images) ? nullptr : (uint16_t*)(_buf + _img[num].offset);
         }
 
-        bool createImages(int xx, int yy, uint8_t num);
+        //bool createImages(int xx, int yy, uint8_t num);
         bool loadImages(const uint8_t* data);
         void putImage(int x, int y, uint8_t num = 0);
         void putSprite(int x, int y, uint16_t maskColor, uint8_t num = 0);

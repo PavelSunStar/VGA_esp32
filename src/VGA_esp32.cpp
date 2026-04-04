@@ -112,7 +112,7 @@ bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff){
     if (bpp != _8BIT && bpp != _16BIT)  return (_inited = false);
 
     _m = m;
-    _dBuff = dBuff;
+    _dBuff = dBuff; 
     _scale = std::clamp(scale, 0, 2);
     _scr.bpp        = bpp;
     _scr.width      = m.hRes >> _scale;
@@ -140,18 +140,17 @@ bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff){
     if (!initPanel()) return false;
 
     Serial.println("VGA init...done\n");
-
     return (_inited = true);
 }
 
-void VGA_esp32::setViewport(int x1, int y1, int x2, int y2){
-    if (x1 > x2) std::swap(x1, x2);
-    if (y1 > y2) std::swap(y1, y2);
+void VGA_esp32::setViewport(int x0, int y0, int x1, int y1){
+    if (x0 > x1) std::swap(x0, x1);
+    if (y0 > y1) std::swap(y0, y1);
 
+    _scr.x0 = std::clamp(x0, 0, _scr.maxX);
+    _scr.y0 = std::clamp(y0, 0, _scr.maxY);
     _scr.x1 = std::clamp(x1, 0, _scr.maxX);
     _scr.y1 = std::clamp(y1, 0, _scr.maxY);
-    _scr.x2 = std::clamp(x2, 0, _scr.maxX);
-    _scr.y2 = std::clamp(y2, 0, _scr.maxY);
 }
 
 void VGA_esp32::memoryInfo(){
@@ -311,8 +310,8 @@ uint16_t VGA_esp32::optimal_bounce_buffer_px(){
     int res = 0;
     _shift = (_scr.bpp == 16 ? 1 : 0);
     if (_m.hRes == 640 && _m.vRes == 480) res = 30720 >> _shift;    
-    _lastPos     = (_m.hRes * _m.vRes) - res;
-
+    _lastPos     = _m.hRes * _m.vRes - res;
+    //_lastPos     = (_m.hRes * (_m.vRes << _shift)) - res;
 
     _lines = (res / _m.hRes) >> _scale;
     _pixels = _m.hRes >> 3;
@@ -473,6 +472,20 @@ void VGA_esp32::updateFPS(){
         _frameCount = 0;
         _fpsStartTime = now;
     }
+}
+
+bool VGA_esp32::initBG(){
+    if (!allocateMemory(_scr.bg, _scr.fullSize, true)) return false;
+    Serial.println("VGA background init...done\n");
+    return (_bg = true);
+}
+
+void VGA_esp32::scrToBg(){
+    if (_bg) memcpy(_scr.bg, _scr.buf + _backBuf, _scr.fullSize);
+}
+
+void VGA_esp32::bgToScr(){
+   if (_bg) memcpy(_scr.buf + _backBuf, _scr.bg, _scr.fullSize); 
 }
 
 /*
