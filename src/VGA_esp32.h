@@ -7,6 +7,12 @@
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_rgb.h"
 
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(ARDUINO_ESP32P4_DEV)
+    #define IS_P4 1
+#else
+    #define IS_P4 0
+#endif
+
 struct Screen{
     // Buffer
     uint8_t*    buf = nullptr;
@@ -41,6 +47,7 @@ class VGA_esp32{
     friend class GFX;
     friend class Sprite;
     friend class Tiles;
+    friend class Font_def;
 
     public:
         VGA_esp32();
@@ -82,7 +89,8 @@ class VGA_esp32{
         bool init(Mode &m = MODE640x480_60Hz, int bpp = 8, int scale = 0, int dBuff = false);
         bool initBG();
         void scrToBg();
-        void bgToScr();        
+        void bgToScr(); 
+        void bgScrollXY(int sx, int sy);       
         void swap();
         void updateFPS();
 
@@ -138,6 +146,7 @@ class VGA_esp32{
         //static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *edata, void *user_ctx);
         static bool IRAM_ATTR on_vsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *edata, void *user_ctx);
         static bool IRAM_ATTR on_bounce_empty(esp_lcd_panel_handle_t panel, void *bounce_buf, int pos_px, int len_bytes, void *user_ctx);
+        static bool IRAM_ATTR on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void *bounce_buf, int pos_px, int len_bytes, void *user_ctx);
         //static bool IRAM_ATTR on_frame_buf_complete(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *edata, void *user_ctx); 
         
         static inline void IRAM_ATTR dup2_565(uint16_t* &dst, uint16_t col) {
