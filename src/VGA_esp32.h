@@ -6,9 +6,11 @@
 #include "esp_psram.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_rgb.h"
+#include "esp_private/esp_cache_private.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(ARDUINO_ESP32P4_DEV)
     #define IS_P4 1
+    #include "driver/ppa.h"
 #else
     #define IS_P4 0
 #endif
@@ -60,13 +62,7 @@ class VGA_esp32{
         uint16_t* Buffer16(int y, int x) {
             return (!_inited ? nullptr : (&_scr.line16[y][x] + _backBuf));
         }         
-/*
-        inline bool Inited()        { return _inited; };
-        inline int FrontBuf()       { return _frontBuf; }
-        inline int BackBuf()        { return _backBuf; }
-        inline int FrontBufLine()   { return _frontBufLine; }
-        inline int BackBufLine()    { return _backBufLine; }
-*/
+
         float FPS()         { return _fps; }
         uint32_t Timer()    { return _timer; }
 
@@ -85,8 +81,8 @@ class VGA_esp32{
         int vX2()       {return _scr.x1;};
         int vY2()       {return _scr.y1;};
 
-        bool allocateMemory(uint8_t* &buffer, size_t size, bool dma = false);
-        bool init(Mode &m = MODE640x480_60Hz, int bpp = 8, int scale = 0, int dBuff = false);
+        void* allocateMemory(size_t request, bool psram = true, size_t* outAligned = nullptr);
+        bool init(Mode &m = MODE640x480_60Hz, int bpp = 8, int scale = 0, int dBuff = false, bool psram = true);
         bool initBG();
         void scrToBg();
         void bgToScr(); 
@@ -94,10 +90,11 @@ class VGA_esp32{
         void swap();
         void updateFPS();
 
+        void cls(uint16_t col = 0);
         void setViewport(int x0, int y0, int x1, int y1);
         void memoryInfo();
 
-        void setPins(Pins p);    
+        void setPins(Pins p);     
         void setPins(
             int r0, int r1, int r2, int r3, int r4,
             int g0, int g1, int g2, int g3, int g4, int g5,
@@ -119,6 +116,8 @@ class VGA_esp32{
         uint8_t     _scale;
         Pins        _pins;
         
+        size_t _sramAlign = 32;
+        size_t _psramAling = 32;
         int _frontBuf, _backBuf;
         int _frontBufLine, _backBufLine;
         int _lines, _lastPos, _pixels, _skip;
@@ -172,5 +171,13 @@ class VGA_esp32{
             v |= (v << 16);
             *((uint32_t*)dst) = v;
             dst += 4;
-        }        
+        }   
+        
+        bool    _ppaFill = false;        
+        #if defined(IS_P4)
+            bool ppa_InitFill();
+
+            ppa_client_handle_t _ppa_fill = nullptr;
+        #endif    
 };
+

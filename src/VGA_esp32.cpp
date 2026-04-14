@@ -11,51 +11,51 @@ VGA_esp32::VGA_esp32(){
     //FPS
     _frameCount = 0;
     _fpsStartTime = millis(); 
-   // _cLine = 0;    
 }
 
 VGA_esp32::~VGA_esp32(){
     if (_scr.line8) delete[] _scr.line8;
     if (_scr.line16) delete[] _scr.line16;
     if (_scr.buf) heap_caps_free(_scr.buf);
+
+    if (IS_P4){
+        if (_ppa_fill){
+            ppa_unregister_client(_ppa_fill);
+            _ppa_fill = nullptr;        
+        }
+    }
 }
 
-bool VGA_esp32::allocateMemory(uint8_t* &buffer, size_t size, bool dma){
-    if (size == 0) return false;
-
-    size_t aligned = (size + 31) & ~size_t(31);
-
-    uint32_t caps;
-    if (dma) {
-        caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT;
-    } else if (_psram_ok) {
-        caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-    } else {
-        caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+void* VGA_esp32::allocateMemory(size_t request, bool psram, size_t* outAligned){
+    if (psram && !_psram_ok){
+        Serial.println("Error: Not PSRAM presend...");
     }
 
-    buffer = (uint8_t*)heap_caps_aligned_alloc(32, aligned, caps);
+    size_t cache_align = 0;
+    uint32_t caps = psram ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA) : MALLOC_CAP_DMA;
 
+    if (esp_cache_get_alignment(caps, &cache_align) != ESP_OK || cache_align < 2) {
+        return nullptr;
+    }
+
+    size_t aligned_size = (request + cache_align - 1) & ~(cache_align - 1);
+
+    void* buffer = heap_caps_aligned_calloc(cache_align, 1, aligned_size, caps);
     if (!buffer) {
-        Serial.println(F("Error: failed to allocate image buffer"));
-        return false;
-    } else {
-        memset(buffer, 0, aligned);
-    }
-/*
-    const char* ramType = "UNKNOWN";
-    if (esp_ptr_external_ram(buffer)) {
-        ramType = "PSRAM";
-    } else if (esp_ptr_internal(buffer)) {
-        ramType = "INTERNAL RAM";
+        return nullptr;
     }
 
-    Serial.printf("Allocated %u bytes in %s, ptr=%p\n",
-                  (unsigned)aligned,
-                  ramType,
-                  buffer);
-*/
-    return true;
+    if (psram){ 
+        _psramAling = cache_align;
+
+        if (esp_cache_get_alignment(MALLOC_CAP_DMA, &_sramAlign) != ESP_OK || _sramAlign < 2) {
+            return nullptr;
+        }        
+    } else       
+        _sramAlign  = cache_align; 
+
+    if (outAligned) *outAligned = aligned_size;
+    return buffer;
 }
 
 bool VGA_esp32::setBufferAddr(){
@@ -107,7 +107,7 @@ bool VGA_esp32::setBufferAddr(){
     return true;
 }
 
-bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff){
+bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff, bool psram){
     if (m.pclk_hz == 0)                 return (_inited = false);
     if (bpp != _8BIT && bpp != _16BIT)  return (_inited = false);
 
@@ -132,12 +132,18 @@ bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff){
     memoryInfo();
     setViewport(0, 0, _scr.maxX, _scr.maxY);
 
-    if (!allocateMemory(_scr.buf, _scr.fullSize << (_dBuff ? 1 : 0))) return false;
+    _scr.buf = (uint8_t*) allocateMemory(_scr.fullSize << (_dBuff ? 1 : 0), psram);
+    if (!_scr.buf) return false;
+
     if (!setBufferAddr()) return false;
     if (!setRGBPanel()) return false;
     regSemaphore();
     regCallBack();
     if (!initPanel()) return false;
+
+    if (IS_P4){
+        _ppaFill = ppa_InitFill();
+    }
 
     Serial.println("VGA init...done\n");
     return (_inited = true);
@@ -191,8 +197,8 @@ bool VGA_esp32::setRGBPanel(Pins pins){
     panel_config.bits_per_pixel         = (_scr.bpp == 16 ? 16 : 8);   
     panel_config.num_fbs                = 0;
     panel_config.bounce_buffer_size_px  = optimal_bounce_buffer_px();
-    panel_config.sram_trans_align       = 32;
-    panel_config.psram_trans_align      = 32;
+    panel_config.sram_trans_align       = _sramAlign;
+    panel_config.psram_trans_align      = _psramAling;
     //panel_config.dma_burst_size = 64;
 
     //Pins config
@@ -342,18 +348,12 @@ bool VGA_esp32::regSemaphore(){
 }
 
 void VGA_esp32::regCallBack(){
-    esp_lcd_rgb_panel_event_callbacks_t cb = {};
-
-    cb.on_color_trans_done   = nullptr;
-    cb.on_vsync              = on_vsync;
-
-    #if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(ARDUINO_ESP32P4_DEV)
-        cb.on_bounce_empty       = on_bounce_empty_p4;
-    #else
-        cb.on_bounce_empty       = on_bounce_empty;
-    #endif
-
-    cb.on_frame_buf_complete = nullptr;
+    esp_lcd_rgb_panel_event_callbacks_t cb = {
+        .on_color_trans_done = nullptr,
+        .on_vsync            = on_vsync,
+        .on_bounce_empty     = (IS_P4 ? on_bounce_empty_p4 : on_bounce_empty),                
+        .on_frame_buf_complete = nullptr
+    };
 
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(panel_handle, &cb, this)); 
     Serial.println("Registered callBacks...Ok"); 
@@ -366,9 +366,6 @@ bool IRAM_ATTR VGA_esp32::on_vsync(esp_lcd_panel_handle_t panel, const esp_lcd_r
 
     return false;
 }
-
-bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void *bounce_buf, int pos_px, int len_bytes, void *user_ctx){
-    VGA_esp32* vga = (VGA_esp32*) user_ctx;
 
     // ESP32-P4 RGB workaround:
     // controller behaves as if output starts 8 pixels later
@@ -412,6 +409,9 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
     // - ESP32-S3 works correctly with the normal bounce buffer logic.
     // - The root cause appears to be inside the ESP32-P4 RGB/LCD_COM/DMA path.
 
+bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void *bounce_buf, int pos_px, int len_bytes, void *user_ctx){
+    VGA_esp32* vga = (VGA_esp32*) user_ctx;
+
     int shift = vga->_shift;
     int bytes = 8 << shift;
     int fix   = len_bytes - bytes;
@@ -420,7 +420,8 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
 
     if (vga->_scale == 0){
         uint8_t *dest = (uint8_t*)bounce_buf;
-        uint8_t *sour = vga->_scr.buf + vga->_frontBuf + position;
+        uint8_t *sour = vga->_scr.buf + vga->_frontBuf + (pos_px << (vga->_shift));
+        //uint8_t *sour = vga->_scr.buf + vga->_frontBuf + position;
 
         if (fill <= vga->_scr.fullSize) memcpy(dest + fix, sour + len_bytes, bytes);        
         memcpy(dest, sour + bytes, fix);
@@ -466,7 +467,7 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
 
                 pixels--;
                 dest = (uint32_t*)(bounce_buf);
-                for (int i = 0; i < pixels; i++){
+                while (pixels-- > 0){
                     col = *secondSour++; *dest++ = col | (col << 16);
                     col = *secondSour++; *dest++ = col | (col << 16);
                     col = *secondSour++; *dest++ = col | (col << 16);
@@ -497,7 +498,7 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
 
                 pixels--;
                 dest = (uint32_t*)(bounce_buf);
-                for (int i = 0; i < pixels; i++){
+                while (pixels-- > 0){
                     col = *secondSour++; col |= (*secondSour++ << 16); col |= col << 8; *dest++ = col;
                     col = *secondSour++; col |= (*secondSour++ << 16); col |= col << 8; *dest++ = col;
                 }                 
@@ -533,7 +534,7 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
 
                 pixels--;
                 dest = (uint32_t*)(bounce_buf);
-                for (int i = 0; i < pixels; i++){
+                while (pixels-- > 0){
                         col = *secondSour++; col |= (col << 16); *dest++ = col; *dest++ = col;
                         col = *secondSour++; col |= (col << 16); *dest++ = col; *dest++ = col;
                 }                 
@@ -565,7 +566,7 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
                 
                 pixels--;
                 dest = (uint32_t*)(bounce_buf);
-                for (int i = 0; i < pixels; i++){
+                while (pixels-- > 0){
                     col = *secondSour++; col |= (col << 16); col |= col << 8; *dest++ = col;
                     col = *secondSour++; col |= (col << 16); col |= col << 8; *dest++ = col;
                 }                    
@@ -697,7 +698,9 @@ void VGA_esp32::updateFPS(){
 }
 
 bool VGA_esp32::initBG(){
-    if (!allocateMemory(_scr.bg, _scr.fullSize, true)) return false;
+    _scr.bg = (uint8_t*) allocateMemory(_scr.fullSize, true);
+    if (!_scr.bg) return false;
+
     Serial.println("VGA background init...done\n");
     return (_bg = true);
 }
@@ -989,3 +992,71 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty(
                 }               
             }                
 */
+void VGA_esp32::cls(uint16_t col){
+    if (!_inited) return;
+
+    if (_ppa_fill && (_scr.bpp == _16BIT)){ 
+        ppa_fill_oper_config_t cfg = {};
+
+        cfg.out.buffer = (void*)(_scr.buf + _backBuf);
+        cfg.out.buffer_size = _scr.fullSize;
+        cfg.out.pic_w = _scr.width;
+        cfg.out.pic_h = _scr.height;
+        cfg.out.block_offset_x = 0;
+        cfg.out.block_offset_y = 0;
+        cfg.out.fill_cm = PPA_FILL_COLOR_MODE_RGB565;
+
+        cfg.fill_block_w = _scr.width;
+        cfg.fill_block_h = _scr.height;
+        cfg.fill_color_val = col;  
+            
+        cfg.mode = PPA_TRANS_MODE_BLOCKING;
+        cfg.user_data = nullptr;   
+
+        ppa_do_fill(_ppa_fill, &cfg);         
+    } else if (_scr.bpp == _16BIT){
+        uint16_t* scr = (uint16_t*)(_scr.buf + _backBuf);
+
+        if ((uint8_t)col == (uint8_t)(col >> 8)){
+            memset(scr, (uint8_t)(col & 0xFF),_scr.fullSize);
+        } else {
+            int size = 0;
+            uint16_t* cpy = scr;
+            while (size++ < _scr.width) *scr++ = col;
+
+            int dummy = 1; 
+            int lines = _scr.maxY;  
+            int copyBytes = _scr.lineSize;
+            int offset = _scr.width;
+        
+            while (lines > 0){ 
+                if (lines >= dummy){
+                    memcpy(scr, cpy, copyBytes);
+                    lines -= dummy;
+                    scr += offset;
+                    copyBytes <<= 1;
+                    offset <<= 1;
+                    dummy <<= 1;
+                } else {
+                    copyBytes =_scr.lineSize * lines;
+                    memcpy(scr, cpy, copyBytes);
+                    break;
+                }
+            }            
+        }        
+    } else {
+        memset(_scr.buf + _backBuf, (uint8_t) col, _scr.fullSize);
+    }
+}
+
+bool VGA_esp32::ppa_InitFill(){
+    if (_ppaFill) return true;
+
+    ppa_client_config_t cfg = {};
+    cfg.oper_type = PPA_OPERATION_FILL;
+    cfg.max_pending_trans_num = 1; 
+    err = ppa_register_client(&cfg, &_ppa_fill);
+
+    return (err == ESP_OK);
+}
+
