@@ -137,13 +137,14 @@ bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff, bool psram){
 
     if (!setBufferAddr()) return false;
     if (!setRGBPanel()) return false;
-    regSemaphore();
-    regCallBack();
-    if (!initPanel()) return false;
 
     if (IS_P4){
         _ppaFill = ppa_InitFill();
     }
+
+    regSemaphore();
+    regCallBack();
+    if (!initPanel()) return false;
 
     Serial.println("VGA init...done\n");
     return (_inited = true);
@@ -169,7 +170,7 @@ void VGA_esp32::memoryInfo(){
     ); 
 }
 
-bool VGA_esp32::setRGBPanel(Pins pins){
+bool VGA_esp32::setRGBPanel(){
     panel_config = {};
 
     //Timing
@@ -205,29 +206,29 @@ bool VGA_esp32::setRGBPanel(Pins pins){
     if (_scr.bpp == 16){
         // B0..B4
         for (int i = 0; i < 5; i++)
-            panel_config.data_gpio_nums[i] = pins.b[i];
+            panel_config.data_gpio_nums[i] = _pins.b[i];
 
         // G0..G5
         for (int i = 0; i < 6; i++)
-            panel_config.data_gpio_nums[5 + i] = pins.g[i];
+            panel_config.data_gpio_nums[5 + i] = _pins.g[i];
 
         // R0..R4
         for (int i = 0; i < 5; i++)
-            panel_config.data_gpio_nums[11 + i] = pins.r[i];
+            panel_config.data_gpio_nums[11 + i] = _pins.r[i];
     } else {
-        panel_config.data_gpio_nums[0] = pins.b[3];
-        panel_config.data_gpio_nums[1] = pins.b[4];
-        panel_config.data_gpio_nums[2] = pins.g[3];
-        panel_config.data_gpio_nums[3] = pins.g[4];
-        panel_config.data_gpio_nums[4] = pins.g[5];
-        panel_config.data_gpio_nums[5] = pins.r[2];
-        panel_config.data_gpio_nums[6] = pins.r[3];
-        panel_config.data_gpio_nums[7] = pins.r[4];
+        panel_config.data_gpio_nums[0] = _pins.b[3];
+        panel_config.data_gpio_nums[1] = _pins.b[4];
+        panel_config.data_gpio_nums[2] = _pins.g[3];
+        panel_config.data_gpio_nums[3] = _pins.g[4];
+        panel_config.data_gpio_nums[4] = _pins.g[5];
+        panel_config.data_gpio_nums[5] = _pins.r[2];
+        panel_config.data_gpio_nums[6] = _pins.r[3];
+        panel_config.data_gpio_nums[7] = _pins.r[4];
     }
-    panel_config.hsync_gpio_num = pins.h;
-    panel_config.vsync_gpio_num = pins.v;
+    panel_config.hsync_gpio_num = _pins.h;
+    panel_config.vsync_gpio_num = _pins.v;
     panel_config.de_gpio_num = -1;
-    panel_config.pclk_gpio_num = pins.pClk;
+    panel_config.pclk_gpio_num = _pins.pClk;
     panel_config.disp_gpio_num = -1;
 
     //Flags
@@ -317,7 +318,6 @@ uint16_t VGA_esp32::optimal_bounce_buffer_px(){
     _shift = (_scr.bpp == 16 ? 1 : 0);
     if (_m.hRes == 640 && _m.vRes == 480) res = 30720 >> _shift;    
     _lastPos     = _m.hRes * _m.vRes - res;
-    //_lastPos     = (_m.hRes * (_m.vRes << _shift)) - res;
 
     _lines = (res / _m.hRes) >> _scale;
     _pixels = _m.hRes >> 3;
@@ -326,6 +326,7 @@ uint16_t VGA_esp32::optimal_bounce_buffer_px(){
     _skip = (_m.hRes >> 2) << _shift;
     Serial.println(_skip);
 
+    if (IS_P4) _ppa_res = res;
     return res;
 }
 
@@ -421,7 +422,183 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
     if (vga->_scale == 0){
         uint8_t *dest = (uint8_t*)bounce_buf;
         uint8_t *sour = vga->_scr.buf + vga->_frontBuf + (pos_px << (vga->_shift));
-        //uint8_t *sour = vga->_scr.buf + vga->_frontBuf + position;
+
+        if (fill <= vga->_scr.fullSize) memcpy(dest + fix, sour + len_bytes, bytes);        
+            memcpy(dest, sour + bytes, fix);    
+    } else {
+        uint32_t* dest = (uint32_t*)((uint8_t*)bounce_buf + (vga->_m.hRes << shift) - bytes);
+
+        uint32_t col;        
+        int lines           = vga->_lines - 1;
+        int pixels          = vga->_pixels;
+        int copyBytes       = vga->_copyBytes;
+        int copyBytes2x     = vga->_copyBytes2x;
+        int skip            = vga->_skip;
+        uint32_t* savePos   = nullptr; 
+
+        if (vga->_scale == 1){
+            if (vga->_scr.bpp == 16){
+                uint16_t* sour = (uint16_t*)(vga->_scr.buf + vga->_frontBuf) + (pos_px >> 2);
+                uint16_t* secondSour = sour + 4;
+                uint16_t* firstSour = sour + (len_bytes >> 3);
+
+                for (int i = 0; i < pixels; i++){
+                    col = *sour++; *dest++ = col | (col << 16);
+                    col = *sour++; *dest++ = col | (col << 16);
+                    col = *sour++; *dest++ = col | (col << 16);
+                    col = *sour++; *dest++ = col | (col << 16);
+                }  
+
+                while (lines-- > 0){
+                    savePos = dest;
+                    for (int i = 0; i < pixels; i++){
+                        col = *sour++; *dest++ = col | (col << 16);
+                        col = *sour++; *dest++ = col | (col << 16);
+                        col = *sour++; *dest++ = col | (col << 16);
+                        col = *sour++; *dest++ = col | (col << 16);
+                    }    
+                    memcpy(dest, savePos, copyBytes); dest += skip;
+                } 
+
+                col = *firstSour++; *dest++ = col | (col << 16);
+                col = *firstSour++; *dest++ = col | (col << 16);
+                col = *firstSour++; *dest++ = col | (col << 16);
+                col = *firstSour++; *dest++ = col | (col << 16);
+
+                pixels--;
+                dest = (uint32_t*)(bounce_buf);
+                while (pixels-- > 0){
+                    col = *secondSour++; *dest++ = col | (col << 16);
+                    col = *secondSour++; *dest++ = col | (col << 16);
+                    col = *secondSour++; *dest++ = col | (col << 16);
+                    col = *secondSour++; *dest++ = col | (col << 16);
+                }                 
+            } else {
+                uint8_t* sour = vga->_scr.buf + vga->_frontBuf + (pos_px >> 2);
+                uint8_t* secondSour = sour + 4;
+                uint8_t* firstSour = sour + (len_bytes >> 2);
+
+                for (int i = 0; i < pixels; i++){
+                    col = *sour++; col |= (*sour++ << 16); col |= col << 8; *dest++ = col;
+                    col = *sour++; col |= (*sour++ << 16); col |= col << 8; *dest++ = col;
+                }  
+                
+                while (lines-- > 0){
+                    savePos = dest;
+                    for (int i = 0; i < pixels; i++){
+                        col = *sour++; col |= (*sour++ << 16); col |= col << 8; *dest++ = col;
+                        col = *sour++; col |= (*sour++ << 16); col |= col << 8; *dest++ = col;
+                    }    
+                    memcpy(dest, savePos, copyBytes);
+                    dest += skip;
+                }    
+                
+                col = *firstSour++; col |= (*firstSour++ << 16); col |= col << 8; *dest++ = col;
+                col = *firstSour++; col |= (*firstSour++ << 16); col |= col << 8; *dest++ = col;
+
+                pixels--;
+                dest = (uint32_t*)(bounce_buf);
+                while (pixels-- > 0){
+                    col = *secondSour++; col |= (*secondSour++ << 16); col |= col << 8; *dest++ = col;
+                    col = *secondSour++; col |= (*secondSour++ << 16); col |= col << 8; *dest++ = col;
+                }                 
+            }
+        } else {
+            int skip2 = skip << 1;
+
+            if (vga->_scr.bpp == 16){
+                uint16_t* sour = (uint16_t*)(vga->_scr.buf + vga->_frontBuf) + (pos_px >> 4);
+                uint16_t* secondSour = sour + 2;
+                uint16_t* firstSour = sour + (len_bytes >> 3);
+
+                savePos = dest;
+                for (int i = 0; i < pixels; i++){
+                        col = *sour++; col |= (col << 16); *dest++ = col; *dest++ = col;
+                        col = *sour++; col |= (col << 16); *dest++ = col; *dest++ = col;
+                }  
+                memcpy(dest, savePos, copyBytes); dest += skip;
+                memcpy(dest, savePos, copyBytes); dest += skip; 
+
+                while (lines-- > 0){
+                    savePos = dest;
+                    for (int i = 0; i < pixels; i++){
+                        col = *sour++; col |= (col << 16); *dest++ = col; *dest++ = col;
+                        col = *sour++; col |= (col << 16); *dest++ = col; *dest++ = col;
+                    }    
+                    memcpy(dest, savePos, copyBytes);   dest += skip;
+                    memcpy(dest, savePos, copyBytes2x); dest += skip2;
+                }
+
+                col = *sour++; col |= (col << 16); *dest++ = col; *dest++ = col;
+                col = *sour++; col |= (col << 16); *dest++ = col; *dest++ = col;                
+
+                pixels--;
+                dest = (uint32_t*)(bounce_buf);
+                while (pixels-- > 0){
+                        col = *secondSour++; col |= (col << 16); *dest++ = col; *dest++ = col;
+                        col = *secondSour++; col |= (col << 16); *dest++ = col; *dest++ = col;
+                }                 
+            } else {
+                uint8_t* sour = vga->_scr.buf + vga->_frontBuf + (pos_px >> 4);
+                uint8_t* secondSour = sour + 2;
+                uint8_t* firstSour = sour + (len_bytes >> 4); 
+
+                savePos = dest;
+                for (int i = 0; i < pixels; i++){
+                    col = *sour++; col |= (col << 16); col |= col << 8; *dest++ = col;
+                    col = *sour++; col |= (col << 16); col |= col << 8; *dest++ = col;
+                }  
+                memcpy(dest, savePos, copyBytes); dest += skip;
+                memcpy(dest, savePos, copyBytes); dest += skip;                 
+                
+                while (lines-- > 0){
+                    savePos = dest;
+                    for (int i = 0; i < pixels; i++){
+                        col = *sour++; col |= (col << 16); col |= col << 8; *dest++ = col;
+                        col = *sour++; col |= (col << 16); col |= col << 8; *dest++ = col;
+                    }    
+                    memcpy(dest, savePos, copyBytes);   dest += skip;
+                    memcpy(dest, savePos, copyBytes2x); dest += skip2;
+                } 
+                
+                col = *firstSour++; col |= (col << 16); col |= col << 8; *dest++ = col;
+                col = *firstSour++; col |= (col << 16); col |= col << 8; *dest++ = col;  
+                
+                pixels--;
+                dest = (uint32_t*)(bounce_buf);
+                while (pixels-- > 0){
+                    col = *secondSour++; col |= (col << 16); col |= col << 8; *dest++ = col;
+                    col = *secondSour++; col |= (col << 16); col |= col << 8; *dest++ = col;
+                }                    
+            }
+        }
+    }
+
+    BaseType_t hp_task_woken = pdFALSE;
+    if (pos_px >= vga->_lastPos && vga->_dBuff) {
+        if (xSemaphoreTakeFromISR(vga->sem_gui_ready, &hp_task_woken) == pdTRUE) {
+            std::swap(vga->_frontBuf, vga->_backBuf);
+            std::swap(vga->_frontBufLine, vga->_backBufLine);
+            xSemaphoreGiveFromISR(vga->sem_vsync_end, &hp_task_woken);
+        }
+    }
+
+    return (hp_task_woken == pdTRUE);
+}
+
+/*
+bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void *bounce_buf, int pos_px, int len_bytes, void *user_ctx){
+    VGA_esp32* vga = (VGA_esp32*) user_ctx;
+
+    int shift = vga->_shift;
+    int bytes = 8 << shift;
+    int fix   = len_bytes - bytes;
+    int position = pos_px << shift;
+    int fill = position + len_bytes + bytes;    
+
+    if (vga->_scale == 0){
+        uint8_t *dest = (uint8_t*)bounce_buf;
+        uint8_t *sour = vga->_scr.buf + vga->_frontBuf + (pos_px << (vga->_shift));
 
         if (fill <= vga->_scr.fullSize) memcpy(dest + fix, sour + len_bytes, bytes);        
         memcpy(dest, sour + bytes, fix);
@@ -585,7 +762,7 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void 
 
     return (hp_task_woken == pdTRUE);
 }
-
+*/
 bool IRAM_ATTR VGA_esp32::on_bounce_empty(esp_lcd_panel_handle_t panel, void *bounce_buf, int pos_px, int len_bytes, void *user_ctx){
     VGA_esp32* vga = (VGA_esp32*) user_ctx;
 
@@ -1013,7 +1190,7 @@ void VGA_esp32::cls(uint16_t col){
         cfg.mode = PPA_TRANS_MODE_BLOCKING;
         cfg.user_data = nullptr;   
 
-        ppa_do_fill(_ppa_fill, &cfg);         
+        ppa_do_fill(_ppa_fill, &cfg);  
     } else if (_scr.bpp == _16BIT){
         uint16_t* scr = (uint16_t*)(_scr.buf + _backBuf);
 

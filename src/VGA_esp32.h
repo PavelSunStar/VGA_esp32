@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "config.h"
+#include "structure.h"
 
 #include "esp_psram.h"
 #include "esp_heap_caps.h"
@@ -15,41 +16,12 @@
     #define IS_P4 0
 #endif
 
-struct Screen{
-    // Buffer
-    uint8_t*    buf = nullptr;
-    uint8_t**   line8 = nullptr;
-    uint16_t**  line16 = nullptr;
-    uint8_t*    bg = nullptr;
-
-    // Screen config
-    uint8_t     bpp;
-	int         width, height;
-	int         maxX, maxY;
-	int         cx, cy;
-    int         lineSize;
-    int         size, fullSize;
-    
-    // viewport
-    int         x0, x1;
-    int         y0, y1;
-};
-
-struct virtualImage{
-    uint8_t*    buf;
-    int         width, height;
-    uint8_t     bpp;
-
-    // viewport
-    int         x0, x1;
-    int         y0, y1;
-};
-
 class VGA_esp32{
     friend class GFX;
     friend class Sprite;
     friend class Tiles;
     friend class Font_def;
+    friend class Palette;
 
     public:
         VGA_esp32();
@@ -102,8 +74,8 @@ class VGA_esp32{
             int hsync, int vsync,
             int pClkPin);
 
-        void make_rotation_matrix(float* r, float dst_x, float dst_y, float src_x, float src_y, float angle_deg, float zoom_x, float zoom_y);
-        bool make_invert_affine32(int32_t* out, const float* m);
+        //void make_rotation_matrix(float* r, float dst_x, float dst_y, float src_x, float src_y, float angle_deg, float zoom_x, float zoom_y);
+        //bool make_invert_affine32(int32_t* out, const float* m);
 
     private:
         bool    _psram_ok   = false;
@@ -114,7 +86,7 @@ class VGA_esp32{
         Mode        _m = {};
         Screen      _scr = {};
         uint8_t     _scale;
-        Pins        _pins;
+        Pins        _pins = defPins_P4;
         
         size_t _sramAlign = 32;
         size_t _psramAling = 32;
@@ -130,7 +102,7 @@ class VGA_esp32{
         volatile uint32_t   _timer = 0;       // vsync counter        
 
         uint16_t optimal_bounce_buffer_px();
-        bool setRGBPanel(Pins pins = defPins_S3);
+        bool setRGBPanel();
         bool regSemaphore();
         void regCallBack();
         bool initPanel();
@@ -176,8 +148,11 @@ class VGA_esp32{
         bool    _ppaFill = false;        
         #if defined(IS_P4)
             bool ppa_InitFill();
-
             ppa_client_handle_t _ppa_fill = nullptr;
+
+            uint32_t _ppa_res;
+            ppa_srm_oper_config_t bounce_cfg;
+            ppa_client_handle_t bounce_srm = nullptr;
         #endif    
 };
 
