@@ -17,13 +17,24 @@ VGA_esp32::~VGA_esp32(){
     if (_scr.line8) delete[] _scr.line8;
     if (_scr.line16) delete[] _scr.line16;
     if (_scr.buf) heap_caps_free(_scr.buf);
+    if (_scr.bg) heap_caps_free(_scr.bg);
 
-    if (IS_P4){
+    #if IS_P4
         if (_ppa_fill){
             ppa_unregister_client(_ppa_fill);
-            _ppa_fill = nullptr;        
+            _ppa_fill = nullptr;
         }
-    }
+
+        if (_ppa_copy){
+            ppa_unregister_client(_ppa_copy);
+            _ppa_copy = nullptr;
+        }
+
+        if (bounce_srm){
+            ppa_unregister_client(bounce_srm);
+            bounce_srm = nullptr;
+        }
+    #endif
 }
 
 void* VGA_esp32::allocateMemory(size_t request, bool psram, size_t* outAligned){
@@ -138,9 +149,10 @@ bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff, bool psram){
     if (!setBufferAddr()) return false;
     if (!setRGBPanel()) return false;
 
-    if (IS_P4){
+    #if IS_P4
         _ppaFill = ppa_InitFill();
-    }
+        _ppaCopy = ppa_InitCopy();
+    #endif
 
     regSemaphore();
     regCallBack();
@@ -874,6 +886,7 @@ void VGA_esp32::updateFPS(){
     }
 }
 
+/*
 bool VGA_esp32::initBG(){
     _scr.bg = (uint8_t*) allocateMemory(_scr.fullSize, true);
     if (!_scr.bg) return false;
@@ -889,7 +902,7 @@ void VGA_esp32::scrToBg(){
 void VGA_esp32::bgToScr(){
    if (_bg) memcpy(_scr.buf + _backBuf, _scr.bg, _scr.fullSize); 
 }
-
+*/
 void VGA_esp32::bgScrollXY(int sx, int sy){
     if (!_scr.bg) return;
 
@@ -1237,3 +1250,108 @@ bool VGA_esp32::ppa_InitFill(){
     return (err == ESP_OK);
 }
 
+bool VGA_esp32::ppa_InitCopy(){
+    if (_ppaCopy) return true;
+
+    ppa_client_config_t cfg = {};
+    cfg.oper_type = PPA_OPERATION_SRM;
+    cfg.max_pending_trans_num = 1;
+
+    err = ppa_register_client(&cfg, &_ppa_copy);
+    _ppaCopy = (err == ESP_OK);
+
+    if (!_ppaCopy){
+        Serial.printf("ppa_InitCopy error: %s\n", esp_err_to_name(err));
+    }
+
+    return _ppaCopy;
+}
+
+bool VGA_esp32::ppa_Copy(void* dst, void* src, size_t bytes){
+    if (!_ppaCopy || !dst || !src || bytes == 0) return false;
+    if (_scr.bpp != _16BIT) return false;
+
+    ppa_srm_oper_config_t cfg = {};
+
+    // INPUT
+    cfg.in.buffer = src;
+    cfg.in.pic_w = _scr.width;
+    cfg.in.pic_h = _scr.height;
+    cfg.in.block_w = _scr.width;
+    cfg.in.block_h = _scr.height;
+    cfg.in.block_offset_x = 0;
+    cfg.in.block_offset_y = 0;
+    cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+    // OUTPUT
+    cfg.out.buffer = dst;
+    cfg.out.buffer_size = bytes;
+    cfg.out.pic_w = _scr.width;
+    cfg.out.pic_h = _scr.height;
+    cfg.out.block_offset_x = 0;
+    cfg.out.block_offset_y = 0;
+    cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+    // SRM settings
+    cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    cfg.scale_x = 1.0f;
+    cfg.scale_y = 1.0f;
+    cfg.mirror_x = false;
+    cfg.mirror_y = false;
+    cfg.rgb_swap = false;
+    cfg.byte_swap = false;
+    cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+
+    cfg.mode = PPA_TRANS_MODE_BLOCKING;
+    cfg.user_data = nullptr;
+
+    err = ppa_do_scale_rotate_mirror(_ppa_copy, &cfg);
+    if (err != ESP_OK){
+        Serial.printf("ppa_Copy error: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    return true;
+}
+
+bool VGA_esp32::initBG(){
+    _scr.bg = (uint8_t*) allocateMemory(_scr.fullSize, true);
+    if (!_scr.bg) return false;
+
+    #if IS_P4
+    if (!_ppaCopy) ppa_InitCopy();
+    #endif
+
+    Serial.println("VGA background init...done\n");
+    return (_bg = true);
+}
+
+void VGA_esp32::scrToBg(){
+    if (!_bg) return;
+
+    uint8_t* src = _scr.buf + _backBuf;
+    uint8_t* dst = _scr.bg;
+
+    #if IS_P4
+    if (_ppaCopy && _scr.bpp == _16BIT){
+        if (ppa_Copy(dst, src, _scr.fullSize)) return;
+    }
+    #endif
+
+    memcpy(dst, src, _scr.fullSize);
+}
+
+void VGA_esp32::bgToScr(){
+    if (!_bg) return;
+
+    uint8_t* src = _scr.bg;
+    uint8_t* dst = _scr.buf + _backBuf;
+
+    #if IS_P4
+    if (_ppaCopy && _scr.bpp == _16BIT){
+        if (ppa_Copy(dst, src, _scr.fullSize)) return;
+    }
+    #endif
+
+    memcpy(dst, src, _scr.fullSize);
+}

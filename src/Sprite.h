@@ -1,22 +1,18 @@
 #pragma once
 
 #include "VGA_esp32.h"
-
-struct Image{
-    int width, height;
-    int maxX, maxY;
-    int cx, cy;    
-    int lineSize, size;
-    int fullSize;
-    int offset, offsetLine;
-
-    // viewport
-    int x0, y0;
-    int x1, y1;    
-};
+#include "structure.h"
+#include "Matrix.h"
 
 class Sprite{
     public:
+        #if IS_P4
+            bool initPPA();
+            void deinitPPA();
+
+            bool tryPPA(int dstX, int dstY, float zoomX, float zoomY, uint8_t num);            
+        #endif
+
         Sprite(VGA_esp32 &vga);
         ~Sprite();
 
@@ -39,7 +35,7 @@ class Sprite{
         void putImage(int x, int y, uint8_t num = 0);
         void putSprite(int x, int y, uint16_t maskColor, uint8_t num = 0);
 
-        void putAffineSprite(int dstX, int dstY, float ang = 0, uint16_t zoomX = 100, uint16_t zoomY = 100, uint16_t maskColor = 0, uint8_t num = 0);
+        void putAffineSprite(int dstX, int dstY, float ang = 0, int zoomX = 100, int zoomY = 100, uint16_t maskColor = 0, uint8_t num = 0);
         //void putRotate(float x, float y, float angle, uint8_t num = 0, float zoom = 1.0f);
         //void putSpriteRotate(int x, int y, float angle, uint16_t maskColor, uint8_t num = 0, float zoom = 1.0f); 
         
@@ -60,5 +56,17 @@ class Sprite{
         bool setBufferAddr();
 
         VGA_esp32 &_vga;
+
+        #if IS_P4
+            ppa_client_handle_t _ppa_srm = nullptr;
+            bool _ppa_ready = false;
+
+
+        #endif 
+        
+    protected:
+        Affine2D mat;
+        RectBounds rectMat;  
+        Affine2DInv invMat;      
 };
 

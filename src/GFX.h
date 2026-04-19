@@ -17,22 +17,11 @@ class GFX{
             }
         }
 
-        // ---- 8 bit (RGB332) ----
-        inline uint8_t RGB8(uint8_t r, uint8_t g, uint8_t b) { return ((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6); }
-        inline uint8_t R8(uint8_t c) { return (c >> 5) & 0x07; }
-        inline uint8_t G8(uint8_t c) { return (c >> 2) & 0x07; }
-        inline uint8_t B8(uint8_t c) { return  c       & 0x03; }
-
-        // ---- 16 bit (RGB565) ----
-        inline uint16_t RGB16(uint8_t r, uint8_t g, uint8_t b) { return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3); }
-        inline uint16_t R16(uint16_t c) { return (c >> 11) & 0x1F; }
-        inline uint16_t G16(uint16_t c) { return (c >> 5)  & 0x3F; }
-        inline uint16_t B16(uint16_t c) { return  c        & 0x1F; }
-
-        void cls(uint16_t col = 0);
+        //void cls(uint16_t col = 0);
         uint16_t getPixel(int x, int y);
         void putPixel(int x, int y, uint16_t col);
         void putPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+        void putPixel(int x, int y, uint8_t index, const palette_struct &pal);
         void hLine(int x0, int y, int x1, uint16_t col);
         void hLineOr(int x0, int y, int x1, uint16_t col);
         void hLineLength(int x, int y, int w, uint16_t col);

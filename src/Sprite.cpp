@@ -1,12 +1,11 @@
 #include "Sprite.h"
-#include "Matrix.h"
 
 Sprite::Sprite(VGA_esp32 &vga) : _vga(vga){
 
 }
 
 Sprite::~Sprite(){
-    
+    deinitPPA();    
 }
 
 void Sprite::resetParam(uint8_t num){
@@ -106,8 +105,10 @@ bool Sprite::loadImages(const uint8_t* data){
         fullSize    += _img[i].fullSize;
         data        += (_img[i].width << imgShift) * _img[i].height;
     }
+    _buf = (uint8_t*) _vga.allocateMemory(fullSize, true);
+    if (!_buf) return false;
 
-    if (!_vga.allocateMemory(_buf, fullSize, false)) return false;  // DMA = false;
+    //if (!_vga.allocateMemory(_buf, fullSize, false)) return false;  // DMA = false;
     if (!setBufferAddr()) return false;
 
     for (int i = 0; i < _images; i++){
@@ -156,51 +157,73 @@ bool Sprite::loadImages(const uint8_t* data){
 
 void Sprite::putImage(int x, int y, uint8_t num){
     if (!_created || num >= _images) return;
-    
+
     auto& s = _vga._scr;
-    Image &im = _img[num];
-    if (x > s.x1 || y > s.y1) return;    
+    Image& im = _img[num];
+
+    if ((unsigned)x > (unsigned)s.x1 || (unsigned)y > (unsigned)s.y1) return;
+
     int xx = x + im.maxX;
     int yy = y + im.maxY;
     if (xx < s.x0 || yy < s.y0) return;
 
-    int imageLineSize   = im.lineSize; 
-    int scrLineSize     = s.lineSize;
-
+    // === FAST PATH: sprite fully inside viewport ===
     if (x >= s.x0 && y >= s.y0 && xx <= s.x1 && yy <= s.y1){
-        uint8_t* img = _buf + im.offset;
-        uint8_t* scr = (_bpp == _16BIT) ? (uint8_t*)&s.line16[_vga._backBufLine + y][x] : (uint8_t*)&s.line8[_vga._backBufLine + y][x];     
+        int lines = im.height;
 
-        int lines = im.height;  
-        while (lines-- > 0){
-            memcpy(scr, img, imageLineSize);
-            scr += scrLineSize;
-            img += imageLineSize;
-        }        
-    } else {
-        int sxl = (x  < s.x0 ? (s.x0 - x)  : 0);
-        int sxr = (xx > s.x1 ? (xx - s.x1) : 0);
-        int syu = (y  < s.y0 ? (s.y0 - y)  : 0);
-        int syd = (yy > s.y1 ? (yy - s.y1) : 0);
+        if (_bpp == _16BIT){
+            uint8_t* img = _buf + im.offset;
+            uint8_t* scr = (uint8_t*)s.line16[_vga._backBufLine + y] + (x << 1);
+            const int copyBytes = im.width << 1;
+            const int dstSkip = s.lineSize;
 
-        int copyX = (im.width  - sxl - sxr) << _shift;
-        int copyY =  im.height - syu - syd; 
-        if (copyX <= 0 || copyY <= 0) return;   
-        
-        uint8_t* img = (_bpp == _16BIT)
-            ? (uint8_t*)&_line16[im.offsetLine + syu][sxl]
-            : (uint8_t*)&_line8[im.offsetLine + syu][sxl];
-        uint8_t* scr = (_bpp == _16BIT)
-            ? (uint8_t*)&s.line16[_vga._backBufLine + y + syu][x + sxl]
-            : (uint8_t*)&s.line8 [_vga._backBufLine + y + syu][x + sxl];  
-            
-        while (copyY-- > 0){
-            memcpy(scr, img, copyX);
-            scr += scrLineSize;
-            img += imageLineSize;
-        }            
+            while (lines--){
+                memcpy(scr, img, copyBytes);
+                img += copyBytes;
+                scr += dstSkip;
+            }
+        } else {
+            uint8_t* img = _buf + im.offset;
+            uint8_t* scr = (uint8_t*)s.line8[_vga._backBufLine + y] + x;
+            const int copyBytes = im.width;
+            const int dstSkip = s.lineSize;
+
+            while (lines--){
+                memcpy(scr, img, copyBytes);
+                img += copyBytes;
+                scr += dstSkip;
+            }
+        }
+        return;
     }
-}    
+
+    // === CLIPPED PATH ===
+    int sxl = (x  < s.x0 ? (s.x0 - x)  : 0);
+    int sxr = (xx > s.x1 ? (xx - s.x1) : 0);
+    int syu = (y  < s.y0 ? (s.y0 - y)  : 0);
+    int syd = (yy > s.y1 ? (yy - s.y1) : 0);
+
+    int copyX = (im.width - sxl - sxr) << _shift;
+    int copyY =  im.height - syu - syd;
+    if (copyX <= 0 || copyY <= 0) return;
+
+    uint8_t* img = (_bpp == _16BIT)
+        ? (uint8_t*)_line16[im.offsetLine + syu] + (sxl << 1)
+        : (uint8_t*)_line8 [im.offsetLine + syu] + sxl;
+
+    uint8_t* scr = (_bpp == _16BIT)
+        ? (uint8_t*)s.line16[_vga._backBufLine + y + syu] + ((x + sxl) << 1)
+        : (uint8_t*)s.line8 [_vga._backBufLine + y + syu] + (x + sxl);
+
+    const int imgStep = im.lineSize;
+    const int scrStep = s.lineSize;
+
+    while (copyY--){
+        memcpy(scr, img, copyX);
+        img += imgStep;
+        scr += scrStep;
+    }
+}
 
 void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
     if (!_created || num >= _images) return;
@@ -285,25 +308,25 @@ void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
     }
 }
 
-void Sprite::putAffineSprite(int dstX, int dstY, float ang, uint16_t zoomX, uint16_t zoomY, uint16_t maskColor, uint8_t num){
-    if (!_created || num >= _images) return;
+void Sprite::putAffineSprite(int dstX, int dstY, float ang, int zoomX, int zoomY, uint16_t maskColor, uint8_t num){
+    if (!_vga._inited || !_created || num >= _images) return;
 
-    auto& s = _vga._scr;    
+    auto& s = _vga._scr; 
     Image& im = _img[num];
+    const int sourW = im.width;
+    const int sourH = im.height;    
 
-    const int srcW = im.width;
-    const int srcH = im.height;
-    Affine2D m = Matrix::make(  (float)dstX, (float)dstY, 
-                                (float)srcW * 0.5f, (float)srcH * 0.5f, 
-                                angle(ang), 
-                                percentTo(zoomX), percentTo(zoomY)
+    mat = Matrix::make((float)dstX, (float)dstY, 
+                    (sourW - 1) * 0.5f, (sourH - 1) * 0.5f, 
+                    angle(ang), 
+                    percentTo(zoomX), percentTo(zoomY)
     );
-
-    RectBounds rb = Matrix::bounds(m, (float)srcW, (float)srcH);
-    int x0 = (int)floorf(rb.sx); // округляет число вниз до ближайшего целого
-    int y0 = (int)floorf(rb.sy);
-    int x1 = (int)ceilf(rb.ex);  // округляет число вверх до ближайшего целого.
-    int y1 = (int)ceilf(rb.ey);
+    
+    rectMat = Matrix::bounds(mat, (float)sourW, (float)sourH);
+    int x0 = (int)floorf(rectMat.sx); // округляет число вниз до ближайшего целого
+    int y0 = (int)floorf(rectMat.sy);
+    int x1 = (int)ceilf(rectMat.ex);  // округляет число вверх до ближайшего целого.
+    int y1 = (int)ceilf(rectMat.ey);  
 
     x0 = std::max(x0, s.x0);
     y0 = std::max(y0, s.y0);
@@ -311,209 +334,54 @@ void Sprite::putAffineSprite(int dstX, int dstY, float ang, uint16_t zoomX, uint
     y1 = std::min(y1, s.y1 + 1);
     if (x0 >= x1 || y0 >= y1) return;
 
-    Affine2DInv inv;
-    if (!Matrix::invert(inv, m)) return;
+    if (!Matrix::invert(invMat, mat)) return; 
+    int row_u = invMat.a * x0 + invMat.b * y0 + invMat.c;
+    int row_v = invMat.d * x0 + invMat.e * y0 + invMat.f;    
 
-    // стартовые координаты для первой точки (x0, y0)
-    int32_t row_u = inv.a * x0 + inv.b * y0 + inv.c + HALF;
-    int32_t row_v = inv.d * x0 + inv.e * y0 + inv.f + HALF;
-      
-    uint8_t** srcLines = _line8 + im.offsetLine;
-    uint8_t* dstBase   = &s.line8[_vga._backBufLine + y0][x0];
-    const uint8_t mask = (uint8_t)(maskColor & 0xFF);
-    //const int dstSkip  = s.width - x1 + x0;
+    int u, v, sx, sy;
+    if (_bpp == _16BIT){
+        uint16_t** sour = _line16 + im.offsetLine;
+        uint16_t* dest = &s.line16[_vga._backBufLine + y0][x0];
 
-    for (int y = y0; y < y1; y++){
-        uint8_t* dst = dstBase;
-        int32_t u = row_u;
-        int32_t v = row_v;
+        while (y0++ < y1){
+            uint16_t* dst = dest;
+            u = row_u;
+            v = row_v;
 
-        for (int x = x0; x < x1; x++){
-            int sx = u >> FP_SHIFT;
-            int sy = v >> FP_SHIFT;
+            for (int x = x0; x < x1; x++){
+                sx = u >> FP_SHIFT;
+                sy = v >> FP_SHIFT;
 
-            if ((unsigned)sx < (unsigned)srcW &&
-                (unsigned)sy < (unsigned)srcH)
-            {
-                uint8_t* srcRow = srcLines[sy];
-                uint8_t col = srcRow[sx];
-                if (col != mask) *dst = col;
-            }
-
-            ++dst;
-            u += inv.a;
-            v += inv.d;
-        }
-
-        dstBase += s.width;
-        row_u   += inv.b;
-        row_v   += inv.e;
-    }
-}
-
-/*
-void Sprite::putMatImage(int32_t dstX, int32_t dstY, float ang, uint8_t num){
-    if (!_created || num >= _images) return;
-
-    auto& s = _vga._scr;    
-    Image& im = _img[num];
-
-    const int srcW = im.width;
-    const int srcH = im.height;
-    if (srcW <= 0 || srcH <= 0) return;
-
-    Affine2D m = Matrix::make(
-        (float)dstX,
-        (float)dstY,
-        (float)srcW * 0.5f,
-        (float)srcH * 0.5f,
-        ang,
-        1.0f,
-        1.0f
-    );
-
-    RectBounds rb = Matrix::bounds(m, (float)srcW, (float)srcH);
-
-    int x0 = (int)floorf(rb.sx);
-    int y0 = (int)floorf(rb.sy);
-    int x1 = (int)ceilf(rb.ex);
-    int y1 = (int)ceilf(rb.ey);
-
-    x0 = std::max(x0, s.x0);
-    y0 = std::max(y0, s.y0);
-    x1 = std::min(x1, s.x1 + 1);
-    y1 = std::min(y1, s.y1 + 1);
-    if (x0 >= x1 || y0 >= y1) return;
-
-    Affine2DInv inv;
-    if (!Matrix::invert(inv, m)) return;
-
-    const int32_t A = inv.a;
-    const int32_t B = inv.b;
-    const int32_t C = inv.c;
-    const int32_t D = inv.d;
-    const int32_t E = inv.e;
-    const int32_t F = inv.f;
-
-    const int32_t uu = A * x0 + C + HALF;
-    const int32_t vv = D * x0 + F + HALF;
-
-    for (int y = y0; y < y1; y++){
-        uint8_t* dst = &s.line8[y + _vga._backBufLine][x0];
-        int32_t u = uu + B * y;
-        int32_t v = vv + E * y;
-
-        for (int x = x0; x < x1; x++){
-            const int sx = u >> FP_SHIFT;
-            const int sy = v >> FP_SHIFT;
-
-            if ((unsigned)sx < (unsigned)srcW && (unsigned)sy < (unsigned)srcH){
-                const uint8_t col = _line8[sy + im.offsetLine][sx];
-                if (col != 0b11100) *dst = col;
-            }
-
-            ++dst;
-            u += A;
-            v += D;
-        }
-    }
-}
-
-void Sprite::putAffineSprite(int32_t dstX, int32_t dstY, float ang, uint16_t maskColor, uint8_t num){
-    if (!_created || num >= _images) return;
-
-    auto& s  = _vga._scr;
-    Image& im = _img[num];
-
-    const int srcW = im.width;
-    const int srcH = im.height;
-
-    // ВАЖНО:
-    // Matrix::make() уже сам переводит angle -> rad,
-    // поэтому сюда передаём просто ang, без angle(ang).
-    Affine2D m = Matrix::make(
-        (float)dstX,
-        (float)dstY,
-        (float)srcW * 0.5f,
-        (float)srcH * 0.5f,
-        ang,
-        2.0f,
-        2.0f
-    );
-
-    RectBounds rb = Matrix::bounds(m, (float)srcW, (float)srcH);
-
-    int x0 = (int)floorf(rb.sx);
-    int y0 = (int)floorf(rb.sy);
-    int x1 = (int)ceilf(rb.ex);
-    int y1 = (int)ceilf(rb.ey);
-
-    // clip to screen
-    x0 = std::max(x0, s.x0);
-    y0 = std::max(y0, s.y0);
-    x1 = std::min(x1, s.x1 + 1);
-    y1 = std::min(y1, s.y1 + 1);
-
-    if (x0 >= x1 || y0 >= y1) return;
-
-    Affine2DInv inv;
-    if (!Matrix::invert(inv, m)) return;
-
-    // стартовые координаты для первой точки (x0, y0)
-    int32_t row_u = inv.a * x0 + inv.b * y0 + inv.c + HALF;
-    int32_t row_v = inv.d * x0 + inv.e * y0 + inv.f + HALF;
-
-    if (_bpp == _16BIT) {
-        uint16_t** srcLines = _line16 + im.offsetLine;
-        uint16_t* dstBase   = &s.line16[_vga._backBufLine + y0][x0];
-        const uint16_t mask = maskColor;
-        const int dstSkip   = s.width - (x1 - x0);
-
-        for (int y = y0; y < y1; y++) {
-            uint16_t* dst = dstBase;
-
-            int32_t u = row_u;
-            int32_t v = row_v;
-
-            for (int x = x0; x < x1; x++) {
-                int sx = u >> FP_SHIFT;
-                int sy = v >> FP_SHIFT;
-
-                if ((unsigned)sx < (unsigned)srcW &&
-                    (unsigned)sy < (unsigned)srcH)
-                {
-                    uint16_t* srcRow = srcLines[sy];
-                    uint16_t col = srcRow[sx];
-                    if (col != mask) *dst = col;
+                if ((unsigned)sx < (unsigned)sourW && (unsigned)sy < (unsigned)sourH){
+                    uint16_t col = sour[sy][sx];
+                    if (col != maskColor) *dst = col;
                 }
 
-                ++dst;
-                u += inv.a;
-                v += inv.d;
+                dst++;
+                u += invMat.a;
+                v += invMat.d;                
             }
 
-            dstBase += s.width;
-            row_u   += inv.b;
-            row_v   += inv.e;
+            dest += s.width;
+            row_u   += invMat.b;
+            row_v   += invMat.e;            
         }
-    } else {
+    } else { 
         uint8_t** srcLines = _line8 + im.offsetLine;
         uint8_t* dstBase   = &s.line8[_vga._backBufLine + y0][x0];
         const uint8_t mask = (uint8_t)(maskColor & 0xFF);
-        const int dstSkip  = s.width - (x1 - x0);
 
-        for (int y = y0; y < y1; y++) {
+        for (int y = y0; y < y1; y++){
             uint8_t* dst = dstBase;
-
             int32_t u = row_u;
             int32_t v = row_v;
 
-            for (int x = x0; x < x1; x++) {
+            for (int x = x0; x < x1; x++){
                 int sx = u >> FP_SHIFT;
                 int sy = v >> FP_SHIFT;
 
-                if ((unsigned)sx < (unsigned)srcW &&
-                    (unsigned)sy < (unsigned)srcH)
+                if ((unsigned)sx < (unsigned)sourW &&
+                    (unsigned)sy < (unsigned)sourH)
                 {
                     uint8_t* srcRow = srcLines[sy];
                     uint8_t col = srcRow[sx];
@@ -521,17 +389,16 @@ void Sprite::putAffineSprite(int32_t dstX, int32_t dstY, float ang, uint16_t mas
                 }
 
                 ++dst;
-                u += inv.a;
-                v += inv.d;
+                u += invMat.a;
+                v += invMat.d;
             }
 
             dstBase += s.width;
-            row_u   += inv.b;
-            row_v   += inv.e;
-        }
-    }
-}
-*/
+            row_u   += invMat.b;
+            row_v   += invMat.e;
+        }  
+    }  
+}    
 
 uint16_t Sprite::getPixel(int x, int y, uint8_t num){
     if (!_created || num >= _images) return 0; 
@@ -541,4 +408,109 @@ uint16_t Sprite::getPixel(int x, int y, uint8_t num){
 
     return ((_bpp == _16BIT) ? _line16[im.offsetLine + y][x] : (uint16_t)_line8[im.offsetLine + y][x]);
 }
+
+// PPA for P4 ==================================================================
+#if IS_P4
+bool Sprite::initPPA(){
+    if (_ppa_srm) {
+        Serial.println("PPA already initialized");
+        return true;
+    }
+
+    ppa_client_config_t cfg = {};
+    cfg.oper_type = PPA_OPERATION_SRM;
+    cfg.max_pending_trans_num = 1;
+
+    esp_err_t err = ppa_register_client(&cfg, &_ppa_srm);
+    Serial.printf("ppa_register_client: %d (%s)\n", err, esp_err_to_name(err));
+
+    return (err == ESP_OK);
+}
+
+void Sprite::deinitPPA(){
+    if (_ppa_srm){
+        esp_err_t err = ppa_unregister_client(_ppa_srm);
+        Serial.printf("ppa_unregister_client: %d (%s)\n", err, esp_err_to_name(err));
+        _ppa_srm = nullptr;
+    }
+}
+/*
+bool Sprite::initPPA() {
+    if (_ppa_ready) return true;
+
+    ppa_client_config_t cfg = {};
+    cfg.oper_type = PPA_OPERATION_SRM;
+    cfg.max_pending_trans_num = 1;
+
+    esp_err_t err = ppa_register_client(&cfg, &_ppa_srm);
+    if (err != ESP_OK) {
+        Serial.printf("ppa_register_client failed: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    _ppa_ready = true;
+    return true;
+}
+
+void Sprite::deinitPPA() {
+    if (_ppa_srm) {
+        ppa_unregister_client(_ppa_srm);
+        _ppa_srm = nullptr;
+    }
+    _ppa_ready = false;
+}
+*/
+bool Sprite::tryPPA(int dstX, int dstY, float zoomX, float zoomY, uint8_t num){
+    if (_bpp != _16BIT) return false;
+
+    if (_ppa_srm == nullptr) {
+        Serial.println("PPA: client is null");
+        return false;
+    }
+
+    auto& s = _vga._scr;
+    Image& im = _img[num];
+
+    ppa_srm_oper_config_t cfg = {};
+
+    // INPUT
+    cfg.in.buffer = (uint16_t*)(_buf + im.offset);//
+    cfg.in.pic_w  = im.width;
+    cfg.in.pic_h  = im.height;
+    cfg.in.block_w = im.width;
+    cfg.in.block_h = im.height;
+    cfg.in.block_offset_x = 0;
+    cfg.in.block_offset_y = 0;//
+    cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+    // OUTPUT
+    cfg.out.buffer = (uint16_t*)&_vga._scr.line16[_vga._backBufLine][0];//
+    cfg.out.buffer_size = s.fullSize;
+    cfg.out.pic_w  = s.width;
+    cfg.out.pic_h  = s.height;
+    cfg.out.block_offset_x = dstX;
+    cfg.out.block_offset_y = dstY;
+    cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+    // TRANSFORM
+    cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    cfg.scale_x = zoomX;
+    cfg.scale_y = zoomY;
+    cfg.mirror_x = false;
+    cfg.mirror_y = false;
+
+    cfg.rgb_swap = false;
+    cfg.byte_swap = false;
+    cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    cfg.alpha_fix_val = 0;
+
+    cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+    esp_err_t err = ppa_do_scale_rotate_mirror(_ppa_srm, &cfg);
+    Serial.printf("PPA do SRM: %d (%s)\n", err, esp_err_to_name(err));
+
+    return (err == ESP_OK);
+}
+
+#endif
 

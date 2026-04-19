@@ -144,15 +144,21 @@ class VGA_esp32{
             *((uint32_t*)dst) = v;
             dst += 4;
         }   
-        
-        bool    _ppaFill = false;        
-        #if defined(IS_P4)
-            bool ppa_InitFill();
-            ppa_client_handle_t _ppa_fill = nullptr;
 
-            uint32_t _ppa_res;
-            ppa_srm_oper_config_t bounce_cfg;
+        bool    _ppaFill = false;
+        bool    _ppaCopy = false;
+
+        #if IS_P4
+            bool ppa_InitFill();
+            bool ppa_InitCopy();
+            bool ppa_Copy(void* dst, void* src, size_t bytes);
+
+            ppa_client_handle_t _ppa_fill = nullptr;
+            ppa_client_handle_t _ppa_copy = nullptr;
+
+            uint32_t _ppa_res = 0;
+            ppa_srm_oper_config_t bounce_cfg = {};
             ppa_client_handle_t bounce_srm = nullptr;
-        #endif    
+        #endif        
 };
 

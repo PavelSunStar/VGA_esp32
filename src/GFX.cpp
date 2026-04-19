@@ -7,7 +7,7 @@ GFX::GFX(VGA_esp32& vga) : _vga(vga){
 GFX::~GFX(){
 
 }
-
+/*
 void GFX::cls(uint16_t col){
     if (!_vga._inited) return;
 
@@ -45,7 +45,7 @@ void GFX::cls(uint16_t col){
         memset(_vga._scr.buf + _vga._backBuf, (uint8_t)(col & 0xFF), _vga._scr.fullSize);
     }    
 }
-
+*/
 uint16_t GFX::getPixel(int x, int y){
     if (!_vga._inited) return 0;
     
@@ -68,7 +68,7 @@ void GFX::putPixel(int x, int y, uint16_t col){
     if (x < s.x0 || y < s.y0 || x > s.x1 ||  y > s.y1) return;
 
     if (s.bpp == _16BIT){
-       s.line16[y + _vga._backBufLine][x] = col;
+        s.line16[y + _vga._backBufLine][x] = col;
     } else {
         s.line8[y + _vga._backBufLine][x] = (uint8_t)(col & 0xFF);
     }
@@ -81,9 +81,22 @@ void GFX::putPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b){
     if (x < s.x0 || y < s.y0 || x > s.x1 ||  y > s.y1) return;
 
     if (s.bpp == _16BIT){
-       s.line16[y + _vga._backBufLine][x] = RGB16(r, g, b);
+        s.line16[y + _vga._backBufLine][x] = RGB16(r, g, b);
     } else {
         s.line8[y + _vga._backBufLine][x] = RGB8(r, g, b);
+    }
+}
+
+void GFX::putPixel(int x, int y, uint8_t index, const palette_struct &pal){
+    if (!_vga._inited || !pal.buf || (index >= pal.size)) return;
+
+    auto& s = _vga._scr;
+    if (x < s.x0 || y < s.y0 || x > s.x1 ||  y > s.y1) return;
+
+    if (s.bpp == _16BIT){
+        s.line16[y + _vga._backBufLine][x] = pal.buf16[index];
+    } else {
+        s.line8[y + _vga._backBufLine][x] = pal.buf[index];
     }
 }
 
