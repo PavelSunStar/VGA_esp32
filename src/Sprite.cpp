@@ -5,7 +5,9 @@ Sprite::Sprite(VGA_esp32 &vga) : _vga(vga){
 }
 
 Sprite::~Sprite(){
-    deinitPPA();    
+    #if IS_P4
+        deinitPPA();
+    #endif   
 }
 
 void Sprite::resetParam(uint8_t num){

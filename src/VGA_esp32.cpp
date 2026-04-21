@@ -8,6 +8,10 @@ VGA_esp32::VGA_esp32(){
         _psram_ok = esp_psram_is_initialized();
     #endif
 
+    #if IS_P4
+        _pins = defPins_P4;
+    #endif
+
     //FPS
     _frameCount = 0;
     _fpsStartTime = millis(); 
@@ -39,6 +43,40 @@ VGA_esp32::~VGA_esp32(){
 
 void* VGA_esp32::allocateMemory(size_t request, bool psram, size_t* outAligned){
     if (psram && !_psram_ok){
+        Serial.println("Error: PSRAM not present...");
+        return nullptr;
+    }
+
+    size_t cache_align = 0;
+    uint32_t caps = psram ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA) : MALLOC_CAP_DMA;
+
+    if (esp_cache_get_alignment(caps, &cache_align) != ESP_OK || cache_align < 2) {
+        Serial.println("allocateMemory: esp_cache_get_alignment failed");
+        return nullptr;
+    }
+
+    size_t aligned_size = (request + cache_align - 1) & ~(cache_align - 1);
+
+    Serial.printf("allocateMemory: req=%u aligned=%u caps=0x%X align=%u\n",
+                  (unsigned)request, (unsigned)aligned_size,
+                  (unsigned)caps, (unsigned)cache_align);
+
+    void* buffer = heap_caps_aligned_calloc(cache_align, 1, aligned_size, caps);
+    if (!buffer) {
+        Serial.println("allocateMemory: heap_caps_aligned_calloc failed");
+        return nullptr;
+    }
+
+    if (psram) _psramAling = cache_align;
+    else       _sramAlign  = cache_align;
+
+    if (outAligned) *outAligned = aligned_size;
+    return buffer;
+}
+
+/*
+void* VGA_esp32::allocateMemory(size_t request, bool psram, size_t* outAligned){
+    if (psram && !_psram_ok){
         Serial.println("Error: Not PSRAM presend...");
     }
 
@@ -68,7 +106,7 @@ void* VGA_esp32::allocateMemory(size_t request, bool psram, size_t* outAligned){
     if (outAligned) *outAligned = aligned_size;
     return buffer;
 }
-
+*/
 bool VGA_esp32::setBufferAddr(){
     if (!_scr.buf || _scr.width <= 0 || _scr.height <= 0) {
         Serial.println("initBuffer: invalid screen buffer");
@@ -143,18 +181,40 @@ bool VGA_esp32::init(Mode &m, int bpp, int scale, int dBuff, bool psram){
     memoryInfo();
     setViewport(0, 0, _scr.maxX, _scr.maxY);
 
-    _scr.buf = (uint8_t*) allocateMemory(_scr.fullSize << (_dBuff ? 1 : 0), psram);
-    if (!_scr.buf) return false;
+    size_t req = _scr.fullSize << (_dBuff ? 1 : 0);
+    Serial.printf("Alloc request: %u bytes, psram=%d, dbuff=%d, bpp=%d, scale=%d\n",
+                  (unsigned)req, psram, _dBuff, _scr.bpp, _scale);
 
-    if (!setBufferAddr()) return false;
-    if (!setRGBPanel()) return false;
+    _scr.buf = (uint8_t*) allocateMemory(req, psram);
+    if (!_scr.buf){
+        Serial.println("ERROR: allocateMemory failed");
+        return false;
+    }
+    Serial.println("Alloc...Ok");
+
+    if (!setBufferAddr()){
+        Serial.println("ERROR: setBufferAddr failed");
+        return false;
+    }
+
+    if (!setRGBPanel()){
+        Serial.println("ERROR: setRGBPanel failed");
+        return false;
+    }
 
     #if IS_P4
         _ppaFill = ppa_InitFill();
         _ppaCopy = ppa_InitCopy();
     #endif
 
-    regSemaphore();
+    if (_dBuff) {
+        if (!regSemaphore()) return false;
+    } else {
+        sem_vsync_end = nullptr;
+        sem_gui_ready = nullptr;
+    }
+
+    //regSemaphore();
     regCallBack();
     if (!initPanel()) return false;
 
@@ -338,22 +398,28 @@ uint16_t VGA_esp32::optimal_bounce_buffer_px(){
     _skip = (_m.hRes >> 2) << _shift;
     Serial.println(_skip);
 
-    if (IS_P4) _ppa_res = res;
+    #if IS_P4
+        _ppa_res = res;
+    #endif
+
     return res;
 }
 
 bool VGA_esp32::regSemaphore(){
-    if (!_dBuff){ 
-        Serial.println("Double buffer not selected.");
-        return false;
-    } else {
-        sem_vsync_end = xSemaphoreCreateBinary();
-        sem_gui_ready = xSemaphoreCreateBinary();
+    sem_vsync_end = nullptr;
+    sem_gui_ready = nullptr;
 
-        if (!sem_vsync_end || !sem_gui_ready){
-            Serial.println("Error: Semaphores init fail.");
-            return false;
-        }    
+    if (!_dBuff){
+        Serial.println("Double buffer not selected.");
+        return true;
+    }
+
+    sem_vsync_end = xSemaphoreCreateBinary();
+    sem_gui_ready = xSemaphoreCreateBinary();
+
+    if (!sem_vsync_end || !sem_gui_ready){
+        Serial.println("Error: Semaphores init fail.");
+        return false;
     }
 
     Serial.println("Registered semaphores...Ok");
@@ -868,6 +934,11 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty(esp_lcd_panel_handle_t panel, void *bo
 
 void VGA_esp32::swap(){
     if (_dBuff){
+        if (!sem_gui_ready || !sem_vsync_end){
+            Serial.println("swap: semaphore not initialized");
+            return;
+        }
+
         xSemaphoreGive(sem_gui_ready);
         xSemaphoreTake(sem_vsync_end, portMAX_DELAY);
     }
@@ -1185,6 +1256,7 @@ bool IRAM_ATTR VGA_esp32::on_bounce_empty(
 void VGA_esp32::cls(uint16_t col){
     if (!_inited) return;
 
+    #if IS_P4    
     if (_ppa_fill && (_scr.bpp == _16BIT)){ 
         ppa_fill_oper_config_t cfg = {};
 
@@ -1204,7 +1276,10 @@ void VGA_esp32::cls(uint16_t col){
         cfg.user_data = nullptr;   
 
         ppa_do_fill(_ppa_fill, &cfg);  
-    } else if (_scr.bpp == _16BIT){
+    } 
+    #endif
+
+    if (_scr.bpp == _16BIT){
         uint16_t* scr = (uint16_t*)(_scr.buf + _backBuf);
 
         if ((uint8_t)col == (uint8_t)(col >> 8)){
@@ -1239,6 +1314,7 @@ void VGA_esp32::cls(uint16_t col){
     }
 }
 
+#if IS_P4
 bool VGA_esp32::ppa_InitFill(){
     if (_ppaFill) return true;
 
@@ -1313,6 +1389,7 @@ bool VGA_esp32::ppa_Copy(void* dst, void* src, size_t bytes){
 
     return true;
 }
+#endif
 
 bool VGA_esp32::initBG(){
     _scr.bg = (uint8_t*) allocateMemory(_scr.fullSize, true);

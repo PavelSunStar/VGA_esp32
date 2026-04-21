@@ -86,7 +86,7 @@ class VGA_esp32{
         Mode        _m = {};
         Screen      _scr = {};
         uint8_t     _scale;
-        Pins        _pins = defPins_P4;
+        Pins        _pins = defPins_S3;
         
         size_t _sramAlign = 32;
         size_t _psramAling = 32;
@@ -111,8 +111,8 @@ class VGA_esp32{
         esp_err_t                   err;
         esp_lcd_rgb_panel_config_t  panel_config = {};
         esp_lcd_panel_handle_t      panel_handle = nullptr;
-        SemaphoreHandle_t           sem_vsync_end;
-	    SemaphoreHandle_t           sem_gui_ready;  
+        SemaphoreHandle_t           sem_vsync_end = nullptr;
+        SemaphoreHandle_t           sem_gui_ready = nullptr;
         
         //static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *edata, void *user_ctx);
         static bool IRAM_ATTR on_vsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *edata, void *user_ctx);
@@ -145,10 +145,10 @@ class VGA_esp32{
             dst += 4;
         }   
 
-        bool    _ppaFill = false;
-        bool    _ppaCopy = false;
-
         #if IS_P4
+            bool    _ppaFill = false;
+            bool    _ppaCopy = false;
+            
             bool ppa_InitFill();
             bool ppa_InitCopy();
             bool ppa_Copy(void* dst, void* src, size_t bytes);
